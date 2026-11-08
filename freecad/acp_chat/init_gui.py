@@ -1,39 +1,69 @@
-"""AI chat dock for FreeCAD. Runs an ACP agent as a subprocess and gives it the
-MCP Bridge addon's server so it can drive the live session.
+"""AI chat dock for FreeCAD. Runs an ACP agent as a subprocess and gives it a
+built-in MCP server (mcp_server.py) so it can drive the live session.
 
 Settings (Tools > Edit parameters > BaseApp/Preferences/Mod/ACPChat):
   AgentCommand  shell command that starts an ACP agent
-  McpUrl        FreeCAD MCP Bridge endpoint
 """
 
+import contextlib
+import io
 import os
 import sys
+import traceback
 
 import FreeCAD as App
 import FreeCADGui as Gui
 from PySide import QtCore, QtGui, QtWidgets
 
+from freecad.acp_chat import mcp_server
 from freecad.acp_chat.acp import AcpClient
 
 PREFS = App.ParamGet("User parameter:BaseApp/Preferences/Mod/ACPChat")
 DEFAULT_AGENT = "npx -y @agentclientprotocol/claude-agent-acp"
-DEFAULT_MCP_URL = "http://127.0.0.1:39280/mcp"
 FIRST_TURN_HINT = (
     "You are an assistant inside FreeCAD. Use the `freecad` MCP tools to inspect "
     "and modify the user's open session.\n\n"
 )
 
 
-def _ensure_bridge():
-    """Start the MCP Bridge addon's server if it is installed and off."""
-    try:
-        from freecad.mcp_bridge import bridge
-        from freecad.mcp_bridge.constants import COMMAND_ID
-    except ImportError:
-        return "MCP Bridge addon not installed; the agent will not see FreeCAD."
-    if not bridge.is_running():
-        Gui.runCommand(COMMAND_ID)  # reuses the addon's own checks and status UI
-    return None if bridge.is_running() else "MCP Bridge failed to start."
+class _GuiRunner(QtCore.QObject):
+    """Runs agent Python on the GUI thread; FreeCAD is not thread-safe."""
+
+    _call = QtCore.Signal(object)
+
+    def __init__(self):
+        super().__init__()
+        self.namespace = {"FreeCAD": App, "App": App, "FreeCADGui": Gui, "Gui": Gui}
+        self._call.connect(self._run, QtCore.Qt.BlockingQueuedConnection)
+
+    @QtCore.Slot(object)
+    def _run(self, job):
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+                exec(job["code"], self.namespace)
+            job["result"] = (out.getvalue(), True)
+        except BaseException:
+            job["result"] = (out.getvalue() + traceback.format_exc(), False)
+
+    def __call__(self, code):  # called from the HTTP server thread
+        job = {"code": code}
+        self._call.emit(job)
+        return job["result"]
+
+
+_server = None
+
+
+def _mcp_servers():
+    """Start the MCP server once per FreeCAD session; return the ACP mcpServers list."""
+    global _server
+    if _server is None:
+        runner = _GuiRunner()
+        _server = (runner, *mcp_server.serve(runner))
+    _runner, url, token = _server
+    return [{"type": "http", "name": "freecad", "url": url,
+             "headers": [{"name": "Authorization", "value": f"Bearer {token}"}]}]
 
 
 def _session_cwd():
@@ -89,10 +119,6 @@ class ChatDock(QtWidgets.QDockWidget):
         self.log.clear()
         self.first_turn = True
         self._set_busy(True)
-        warning = _ensure_bridge()
-        if warning:
-            self._append(f"\n⚠ {warning}\n")
-
         cmd = PREFS.GetString("AgentCommand", DEFAULT_AGENT)
         self.proc = QtCore.QProcess(self)
         if sys.platform == "win32":
@@ -117,8 +143,7 @@ class ChatDock(QtWidgets.QDockWidget):
         )
         self._append(f"Starting agent: {cmd}\n")
         self.proc.start()
-        mcp = [{"type": "http", "name": "freecad", "url": PREFS.GetString("McpUrl", DEFAULT_MCP_URL), "headers": []}]
-        self.client.start(_session_cwd(), mcp, lambda _sid: (self._append("Ready.\n"), self._set_busy(False)))
+        self.client.start(_session_cwd(), _mcp_servers(), lambda _sid: (self._append("Ready.\n"), self._set_busy(False)))
 
     def _on_exit(self, code, _status):
         self._append(f"\n⚠ Agent exited (code {code}). Check Report view for its log; click New session to retry.\n")
