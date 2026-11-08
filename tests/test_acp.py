@@ -27,7 +27,7 @@ class AcpClientTest(unittest.TestCase):
         ready, done = [], []
         self.c.start("/tmp", [{"type": "http", "name": "freecad", "url": "u", "headers": []}], ready.append)
         self.assertEqual(self.sent[0]["method"], "initialize")
-        self.c.feed(line({"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": 1}}))
+        self.c.feed(line({"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": 1, "agentCapabilities": {"promptCapabilities": {"image": True}}}}))
         self.assertEqual(self.sent[1]["method"], "session/new")
         self.assertEqual(self.sent[1]["params"]["mcpServers"][0]["name"], "freecad")
         # message split across chunks must still parse
@@ -35,9 +35,12 @@ class AcpClientTest(unittest.TestCase):
         self.c.feed(raw[:10])
         self.c.feed(raw[10:])
         self.assertEqual(ready, ["s1"])
+        self.assertTrue(self.c.supports_images())
 
-        self.c.prompt("make a cube", done.append)
+        image = {"type": "image", "mimeType": "image/png", "data": "AAAA"}
+        self.c.prompt([{"type": "text", "text": "make a cube"}, image], done.append)
         self.assertEqual(self.sent[2]["params"]["prompt"][0]["text"], "make a cube")
+        self.assertEqual(self.sent[2]["params"]["prompt"][1], image)
         upd = {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "hi"}}
         self.c.feed(line({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "s1", "update": upd}}))
         self.c.feed(line({"jsonrpc": "2.0", "id": 3, "result": {"stopReason": "end_turn"}}))

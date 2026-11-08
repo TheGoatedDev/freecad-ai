@@ -10,6 +10,13 @@ AI chat panel for FreeCAD. Talks to any [Agent Client Protocol](https://agentcli
 
 The default agent needs Node (`npx`) and a Claude Code login.
 
+## Context
+
+- **Attach selection** sends the selected faces, edges, vertices and objects as text: type, area or length, centroid, normal or radius, and pick point.
+- **Attach view** sends a PNG of the current 3D view, if the agent accepts images.
+
+Attachments go with your next message. **Clear** drops them.
+
 ## Settings
 
 Tools > Edit parameters > `BaseApp/Preferences/Mod/ACPChat`:

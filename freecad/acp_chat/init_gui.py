@@ -15,7 +15,7 @@ import FreeCAD as App
 import FreeCADGui as Gui
 from PySide import QtCore, QtGui, QtWidgets
 
-from freecad.acp_chat import mcp_server
+from freecad.acp_chat import context, mcp_server
 from freecad.acp_chat.acp import AcpClient
 
 PREFS = App.ParamGet("User parameter:BaseApp/Preferences/Mod/ACPChat")
@@ -80,6 +80,7 @@ class ChatDock(QtWidgets.QDockWidget):
         self.proc = None
         self.client = None
         self.first_turn = True
+        self.attachments = []  # (label, ACP content block) sent with the next message
 
         self.log = QtWidgets.QTextBrowser()
         self.input = QtWidgets.QPlainTextEdit()
@@ -92,18 +93,35 @@ class ChatDock(QtWidgets.QDockWidget):
         self.stop_btn.clicked.connect(lambda: self.client and self.client.cancel())
         new_btn.clicked.connect(self.restart)
         QtGui.QShortcut(QtGui.QKeySequence("Ctrl+Return"), self.input, self.send)
+        sel_btn = QtWidgets.QPushButton("Attach selection")
+        sel_btn.setToolTip("Send the selected faces, edges, vertices and objects with the next message")
+        view_btn = QtWidgets.QPushButton("Attach view")
+        view_btn.setToolTip("Send a picture of the current 3D view with the next message")
+        self.clear_btn = QtWidgets.QPushButton("Clear")
+        self.attached_label = QtWidgets.QLabel()
+        self.attached_label.setWordWrap(True)
+        sel_btn.clicked.connect(self.attach_selection)
+        view_btn.clicked.connect(self.attach_view)
+        self.clear_btn.clicked.connect(lambda: self._set_attachments([]))
+        attach_row = QtWidgets.QHBoxLayout()
+        for w in (sel_btn, view_btn, self.clear_btn):
+            attach_row.addWidget(w)
+        attach_row.addStretch()
 
         buttons = QtWidgets.QHBoxLayout()
         for b in (self.send_btn, self.stop_btn, new_btn):
             buttons.addWidget(b)
         layout = QtWidgets.QVBoxLayout()
         layout.addWidget(self.log)
+        layout.addLayout(attach_row)
+        layout.addWidget(self.attached_label)
         layout.addWidget(self.input)
         layout.addLayout(buttons)
         body = QtWidgets.QWidget()
         body.setLayout(layout)
         self.setWidget(body)
         self._set_busy(True)
+        self._set_attachments([])
         self.visibilityChanged.connect(self._start_once)
 
     # -- process lifecycle -------------------------------------------------
@@ -118,6 +136,7 @@ class ChatDock(QtWidgets.QDockWidget):
             self.proc.waitForFinished(2000)
         self.log.clear()
         self.first_turn = True
+        self._set_attachments([])
         self._set_busy(True)
         cmd = PREFS.GetString("AgentCommand", DEFAULT_AGENT)
         self.proc = QtCore.QProcess(self)
@@ -158,9 +177,35 @@ class ChatDock(QtWidgets.QDockWidget):
         self.input.clear()
         self._append(f"\n\n▶ {text}\n\n")
         self._set_busy(True)
+        for label, _block in self.attachments:
+            self._append(f"📎 {label}\n")
         if self.first_turn:
             text, self.first_turn = FIRST_TURN_HINT + text, False
-        self.client.prompt(text, self._on_done)
+        blocks = [{"type": "text", "text": text}] + [block for _label, block in self.attachments]
+        self._set_attachments([])
+        self.client.prompt(blocks, self._on_done)
+
+    def attach_selection(self):
+        text = context.selection_text()
+        if text is None:
+            return self._append("\n⚠ Nothing selected.\n")
+        count = text.count("\n- ")
+        self._set_attachments(self.attachments + [(f"selection ({count})", {"type": "text", "text": text})])
+
+    def attach_view(self):
+        if self.client and self.client.session_id and not self.client.supports_images():
+            return self._append("\n⚠ This agent does not accept images.\n")
+        data = context.view_image()
+        if data is None:
+            return self._append("\n⚠ No 3D view open.\n")
+        self._set_attachments(self.attachments + [("view", {"type": "image", "mimeType": "image/png", "data": data})])
+
+    def _set_attachments(self, attachments):
+        self.attachments = attachments
+        labels = ", ".join(label for label, _block in attachments)
+        self.attached_label.setText(f"📎 {labels}" if labels else "")
+        self.attached_label.setVisible(bool(labels))
+        self.clear_btn.setVisible(bool(labels))
 
     def _on_done(self, stop_reason):
         if stop_reason not in ("end_turn", None):

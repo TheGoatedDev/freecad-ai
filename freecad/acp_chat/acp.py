@@ -20,6 +20,7 @@ class AcpClient:
         self._next_id = 0
         self._pending = {}
         self.session_id = None
+        self.agent_capabilities = {}
 
     # -- outgoing ---------------------------------------------------------
 
@@ -42,7 +43,8 @@ class AcpClient:
             self.session_id = result["sessionId"]
             on_ready(self.session_id)
 
-        def initialized(_result):
+        def initialized(result):
+            self.agent_capabilities = result.get("agentCapabilities") or {}
             self.request(
                 "session/new",
                 {"cwd": cwd, "mcpServers": mcp_servers},
@@ -63,11 +65,14 @@ class AcpClient:
             initialized,
         )
 
-    def prompt(self, text, on_done):
-        """Send a user turn; on_done(stop_reason) when the agent finishes."""
+    def supports_images(self):
+        return bool((self.agent_capabilities.get("promptCapabilities") or {}).get("image"))
+
+    def prompt(self, blocks, on_done):
+        """Send a user turn (list of ACP content blocks); on_done(stop_reason) when the agent finishes."""
         self.request(
             "session/prompt",
-            {"sessionId": self.session_id, "prompt": [{"type": "text", "text": text}]},
+            {"sessionId": self.session_id, "prompt": blocks},
             lambda result: on_done(result.get("stopReason")),
         )
 
