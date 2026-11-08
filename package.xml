@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<package format="1" xmlns="https://wiki.freecad.org/Package_Metadata">
+    <name>ACP Chat</name>
+    <description>Chat with any Agent Client Protocol (ACP) agent inside FreeCAD. Uses the MCP Bridge addon to let the agent drive the live session.</description>
+    <version>0.1.0</version>
+    <license>MIT</license>
+    <freecadmin>1.1.0</freecadmin>
+    <tag>ai</tag>
+    <tag>acp</tag>
+    <content>
+        <other>
+            <subdirectory>./</subdirectory>
+        </other>
+    </content>
+</package>
