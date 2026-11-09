@@ -333,7 +333,7 @@ class Composer(QtWidgets.QFrame):
     """Input box. The selection and view toggles are read at send time; while on,
     their chips preview what will be sent."""
 
-    MAX_CHIPS = 3
+    MAX_CHIPS = 2
 
     send = QtCore.Signal(str)
     stop = QtCore.Signal()
