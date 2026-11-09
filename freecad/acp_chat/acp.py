@@ -151,15 +151,9 @@ class AcpClient:
             req_id = msg["id"]
 
             def reply(option_id):
-                outcome = (
-                    {"outcome": "selected", "optionId": option_id}
-                    if option_id
-                    else {"outcome": "cancelled"}
-                )
+                outcome = {"outcome": "selected", "optionId": option_id} if option_id else {"outcome": "cancelled"}
                 self._send({"id": req_id, "result": {"outcome": outcome}})
 
             self._on_permission(msg["params"], reply)
         elif "id" in msg:
-            self._send(
-                {"id": msg["id"], "error": {"code": -32601, "message": f"Method not found: {method}"}}
-            )
+            self._send({"id": msg["id"], "error": {"code": -32601, "message": f"Method not found: {method}"}})

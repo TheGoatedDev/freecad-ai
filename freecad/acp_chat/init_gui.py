@@ -11,10 +11,10 @@ import os
 import sys
 import traceback
 
-import FreeCAD as App
 import FreeCADGui as Gui
 from PySide import QtCore, QtGui, QtWidgets
 
+import FreeCAD as App
 from freecad.acp_chat import context, mcp_server, ui
 from freecad.acp_chat.acp import AcpClient
 
@@ -70,8 +70,14 @@ def _mcp_servers():
         runner = _GuiRunner()
         _server = (runner, *mcp_server.serve(runner))
     _runner, url, token = _server
-    return [{"type": "http", "name": "freecad", "url": url,
-             "headers": [{"name": "Authorization", "value": f"Bearer {token}"}]}]
+    return [
+        {
+            "type": "http",
+            "name": "freecad",
+            "url": url,
+            "headers": [{"name": "Authorization", "value": f"Bearer {token}"}],
+        }
+    ]
 
 
 def _session_cwd():
@@ -86,7 +92,7 @@ class ChatDock(QtWidgets.QDockWidget):
         super().__init__("AI Chat", parent)
         self.setObjectName("ACPChatDock")
         self.proc = None
-        self.client = None
+        self.client: AcpClient | None = None
         self.first_turn = True
 
         root = QtWidgets.QWidget()
@@ -184,19 +190,17 @@ class ChatDock(QtWidgets.QDockWidget):
             # Login shell so GUI-launched FreeCAD finds npx/node on the user's PATH.
             self.proc.setProgram(os.environ.get("SHELL", "/bin/sh"))
             self.proc.setArguments(["-lc", cmd])
-        self.proc.readyReadStandardOutput.connect(
-            lambda: self.client.feed(bytes(self.proc.readAllStandardOutput()))
-        )
-        self.proc.readyReadStandardError.connect(
-            lambda: App.Console.PrintLog(bytes(self.proc.readAllStandardError()).decode("utf-8", "replace"))
-        )
-        self.proc.finished.connect(self._on_exit)
-        self.client = AcpClient(
+        client = self.client = AcpClient(
             lambda data: self.proc.write(data),
             self._on_update,
             self.transcript.permission,
             self._on_error,
         )
+        self.proc.readyReadStandardOutput.connect(lambda: client.feed(bytes(self.proc.readAllStandardOutput())))
+        self.proc.readyReadStandardError.connect(
+            lambda: App.Console.PrintLog(bytes(self.proc.readAllStandardError()).decode("utf-8", "replace"))
+        )
+        self.proc.finished.connect(self._on_exit)
         self.proc.start()
         self.client.start(
             _session_cwd(),
@@ -210,6 +214,7 @@ class ChatDock(QtWidgets.QDockWidget):
         self.composer.edit.setPlaceholderText("Sign in above to start")
 
     def _on_ready(self, _session_id):
+        assert self.client is not None
         self._set_state(ready=True, busy=False)
         # Re-apply the user's last choices (model, effort, mode, ...) to the new session.
         for opt in self.client.config_options:
@@ -253,6 +258,7 @@ class ChatDock(QtWidgets.QDockWidget):
             self.restart()
 
     def _set_config(self, config_id, value):
+        assert self.client is not None
         PREFS.SetString(f"Config_{config_id}", value)
         self.client.set_config(config_id, value)
 
@@ -266,6 +272,7 @@ class ChatDock(QtWidgets.QDockWidget):
     # -- chat ----------------------------------------------------------------
 
     def send(self, text):
+        assert self.client is not None
         attachments = self._capture()
         self.transcript.user(text, attachments)
         self._set_state(ready=True, busy=True)
@@ -276,6 +283,7 @@ class ChatDock(QtWidgets.QDockWidget):
 
     def _capture(self):
         """Selection and view as they are now, for the toggles that are on."""
+        assert self.client is not None
         out = []
         if self.composer.sel_btn.isChecked():
             text = context.selection_text()
@@ -305,7 +313,7 @@ class ChatDock(QtWidgets.QDockWidget):
             self.transcript.assistant_chunk(update["content"]["text"])
         elif kind in ("tool_call", "tool_call_update"):
             self.transcript.tool(update)
-        elif kind == "config_option_update":
+        elif kind == "config_option_update" and self.client:
             self.composer.set_config_options(self.client.config_options)
 
     def _on_error(self, message):

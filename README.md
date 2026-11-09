@@ -118,11 +118,17 @@ Under **Tools > Edit parameters**, in `BaseApp/Preferences/Mod/ACPChat`:
 
 ## Development
 
+Tooling runs through [uv](https://docs.astral.sh/uv/). The addon itself has no dependencies; `uv sync` installs only the dev tools.
+
 ```sh
-python3 -m unittest discover tests
+uv sync
+uv run ruff check .
+uv run ruff format .
+uv run mypy
+uv run python -m unittest discover tests
 ```
 
-The tests cover the ACP client and the MCP server without FreeCAD. The panel itself was tested by driving FreeCAD on macOS. Linux and Windows are untested.
+mypy skips `FreeCAD`, `FreeCADGui` and `PySide`, which only exist inside FreeCAD. The unit tests cover the ACP client and the MCP server without FreeCAD. The panel itself was tested by driving FreeCAD on macOS. Linux and Windows are untested.
 
 ## License
 

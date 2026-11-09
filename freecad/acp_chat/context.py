@@ -59,7 +59,7 @@ def selection_text():
         if not names:
             lines.append(f"- {head}")
         points = list(sel.PickedPoints) + [None] * len(names)
-        for name, sub, pt in zip(names, sel.SubObjects, points):
+        for name, sub, pt in zip(names, sel.SubObjects, points, strict=False):
             try:
                 geo = _geometry(sub)
             except Exception as e:  # non-Part objects, degenerate shapes

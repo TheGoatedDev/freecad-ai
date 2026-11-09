@@ -51,7 +51,9 @@ def toggle_icon(name, off_color, on_color):
 
 
 def _mix(a, b, t):
-    return QtGui.QColor.fromRgbF(*(x * t + y * (1 - t) for x, y in zip(a.getRgbF()[:3], b.getRgbF()[:3]))).name()
+    return QtGui.QColor.fromRgbF(
+        *(x * t + y * (1 - t) for x, y in zip(a.getRgbF()[:3], b.getRgbF()[:3], strict=True))
+    ).name()
 
 
 def theme(parent):
@@ -111,7 +113,8 @@ QScrollArea {{ border: none; background: transparent; }}
 #chatRoot QToolButton#pill::menu-indicator {{ image: none; width: 0; }}
 QPushButton#sendBtn {{ background: {accent}; border: none; border-radius: 14px; padding: 0; }}
 QPushButton#sendBtn:disabled {{ background: {border}; }}
-QPushButton#primary {{ background: {accent}; color: {accent_text}; border: none; border-radius: 6px; padding: 5px 12px; }}
+QPushButton#primary {{ background: {accent}; color: {accent_text}; border: none; border-radius: 6px;
+                      padding: 5px 12px; }}
 QPushButton#secondary {{ background: transparent; color: {text}; border: 1px solid {border}; border-radius: 6px;
                         padding: 4px 12px; }}
 QPushButton#secondary:hover {{ background: {panel}; }}
@@ -145,7 +148,8 @@ class ToolRow(QtWidgets.QWidget):
 
     def __init__(self, t, update):
         super().__init__()
-        self.t, self.state = t, {"status": "pending"}
+        self.t = t
+        self.state: dict = {"status": "pending"}
         self.button = QtWidgets.QToolButton()
         self.button.setObjectName("toolRow")
         self.button.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
@@ -186,7 +190,9 @@ class ToolRow(QtWidgets.QWidget):
             if c.get("type") == "content" and isinstance(c.get("content"), dict)
         )
         raw = code if code is not None else json.dumps(s.get("rawInput"), indent=2) if s.get("rawInput") else ""
-        self.detail.setPlainText("\n\n".join(part for part in (raw.strip(), out.strip() and "→ " + out.strip()) if part))
+        self.detail.setPlainText(
+            "\n\n".join(part for part in (raw.strip(), out.strip() and "→ " + out.strip()) if part)
+        )
         self._fit()
 
     def resizeEvent(self, event):
@@ -255,6 +261,7 @@ class Transcript(QtWidgets.QScrollArea):
         self.tools = {}
         self._assistant = None
         self._stick = True
+        self.empty: QtWidgets.QWidget | None = None
         self.verticalScrollBar().valueChanged.connect(self._track_bottom)
         self.verticalScrollBar().rangeChanged.connect(lambda *_: self._stick and self._to_bottom())
         self.clear()
@@ -283,9 +290,13 @@ class Transcript(QtWidgets.QScrollArea):
         head = _label("Ask about your model")
         head.setStyleSheet("font-weight: 600;")
         lay.addWidget(head)
-        lay.addWidget(_label(
-            "The agent can read and change the open document. Whatever you select is "
-            "sent with your message, so it knows what you mean.", muted=True))
+        lay.addWidget(
+            _label(
+                "The agent can read and change the open document. Whatever you select is "
+                "sent with your message, so it knows what you mean.",
+                muted=True,
+            )
+        )
         self.lay.insertWidget(0, self.empty)
 
     def user(self, text, attachments):
@@ -351,8 +362,10 @@ class Transcript(QtWidgets.QScrollArea):
     def sign_in(self, agent, methods, choose):
         self._assistant = None
         self._stick = True
-        options = [{"optionId": m["id"], "name": m["name"], "kind": "allow_once" if i == 0 else ""}
-                   for i, m in enumerate(methods)]
+        options = [
+            {"optionId": m["id"], "name": m["name"], "kind": "allow_once" if i == 0 else ""}
+            for i, m in enumerate(methods)
+        ]
         text = f"{agent} needs you to sign in. Pick how:"
         self._add(PermissionCard(text, options, choose))
 
@@ -489,7 +502,9 @@ class Composer(QtWidgets.QFrame):
                 act.setCheckable(True)
                 act.setChecked(on)
                 act.setToolTip(opt.get("description", ""))
-                act.triggered.connect(lambda checked, i=opt["id"]: self.config_changed.emit(i, "on" if checked else "off"))
+                act.triggered.connect(
+                    lambda checked, i=opt["id"]: self.config_changed.emit(i, "on" if checked else "off")
+                )
             else:
                 sub = menu.addMenu(f"{opt['name']}: {current(opt).get('name', '')}")
                 sub.setToolTipsVisible(True)
@@ -569,14 +584,22 @@ class Composer(QtWidgets.QFrame):
             if item.widget():
                 item.widget().deleteLater()
         if self.view_btn.isChecked():
-            self._chip("3D view", "A picture of the 3D view is taken when you send",
-                       lambda: self.view_btn.setChecked(False), pic="camera")
+            self._chip(
+                "3D view",
+                "A picture of the 3D view is taken when you send",
+                lambda: self.view_btn.setChecked(False),
+                pic="camera",
+            )
         if self.sel_btn.isChecked():
             shown = self.selection[: self.MAX_CHIPS]
             for label, key in shown:
-                self._chip(label, "Click × to deselect it in FreeCAD",
-                           lambda _=False, k=key: self.unselect.emit(k), pic="pointer")
-            rest = self.selection[self.MAX_CHIPS:]
+                self._chip(
+                    label,
+                    "Click × to deselect it in FreeCAD",
+                    lambda _=False, k=key: self.unselect.emit(k),
+                    pic="pointer",
+                )
+            rest = self.selection[self.MAX_CHIPS :]
             if rest:
                 self._chip(f"+{len(rest)} more", "\n".join(label for label, _k in rest), None)
             if not self.selection:
