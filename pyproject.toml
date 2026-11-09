@@ -19,6 +19,12 @@ line-length = 120
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 
+[tool.ruff.lint.isort]
+# macOS's case-insensitive filesystem makes `FreeCAD` look like the local `freecad/`
+# package, so pin both sides or import order differs between macOS and CI.
+known-first-party = ["freecad"]
+known-third-party = ["FreeCAD", "FreeCADGui"]
+
 [tool.mypy]
 python_version = "3.11"
 files = ["freecad", "tests"]

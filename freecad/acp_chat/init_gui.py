@@ -11,10 +11,10 @@ import os
 import sys
 import traceback
 
+import FreeCAD as App
 import FreeCADGui as Gui
 from PySide import QtCore, QtGui, QtWidgets
 
-import FreeCAD as App
 from freecad.acp_chat import context, mcp_server, ui
 from freecad.acp_chat.acp import AcpClient
 
