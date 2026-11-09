@@ -74,6 +74,20 @@ class AcpClientTest(unittest.TestCase):
                           "params": {"sessionId": "s1", "update": {"sessionUpdate": "current_mode_update", "currentModeId": "default"}}}))
         self.assertEqual(self.c.config_options[0]["currentValue"], "default")
 
+    def test_auth_required_then_retry(self):
+        ready, asked = [], []
+        self.c.start("/tmp", [], ready.append, lambda methods, auth: asked.append((methods, auth)))
+        self.c.feed(line({"jsonrpc": "2.0", "id": 1, "result": {"authMethods": [{"id": "chat-gpt", "name": "ChatGPT"}]}}))
+        self.c.feed(line({"jsonrpc": "2.0", "id": 2, "error": {"code": -32000, "message": "Authentication required"}}))
+        self.assertEqual(asked[0][0][0]["id"], "chat-gpt")
+        self.assertEqual(self.errors, [])
+        asked[0][1]("chat-gpt")
+        self.assertEqual((self.sent[-1]["method"], self.sent[-1]["params"]), ("authenticate", {"methodId": "chat-gpt"}))
+        self.c.feed(line({"jsonrpc": "2.0", "id": 3, "result": {}}))
+        self.assertEqual(self.sent[-1]["method"], "session/new")
+        self.c.feed(line({"jsonrpc": "2.0", "id": 4, "result": {"sessionId": "s9"}}))
+        self.assertEqual(ready, ["s9"])
+
     def test_error_response(self):
         self.c.request("initialize", {}, lambda r: self.fail("should not succeed"))
         self.c.feed(line({"jsonrpc": "2.0", "id": 1, "error": {"code": -32000, "message": "auth required"}}))

@@ -23,6 +23,7 @@ _ICONS = {
     "dot": '<circle cx="8" cy="8" r="3" fill="currentColor"/>',
     "shield": '<path d="M8 1.75 13.25 3.75v4c0 3.2-2.2 5.6-5.25 6.5-3.05-.9-5.25-3.3-5.25-6.5v-4Z"/>',
     "sparkle": '<path d="M8 2c.6 3.2 1.8 4.4 5 5-3.2.6-4.4 1.8-5 5-.6-3.2-1.8-4.4-5-5 3.2-.6 4.4-1.8 5-5Z"/>',
+    "chevron_down": '<path d="M4.5 6.5 8 10l3.5-3.5"/>',
     "bolt": '<path d="M9 1.75 3.75 9h4l-1 5.25L12.25 7h-4Z"/>',
 }
 
@@ -196,16 +197,17 @@ class ToolRow(QtWidgets.QWidget):
 
 
 class PermissionCard(QtWidgets.QFrame):
-    def __init__(self, params, reply):
+    """Inline question with one button per option; options are ACP-shaped
+    ({optionId, name, kind}) and reply(optionId) is called once."""
+
+    def __init__(self, text, options, reply):
         super().__init__()
         self.setObjectName("permCard")
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(12, 10, 12, 10)
-        title = _tool_title(params.get("toolCall") or {})
-        lay.addWidget(_label(f"The agent wants to run {title}."))
+        lay.addWidget(_label(text))
         grid = QtWidgets.QGridLayout()  # two per row so the card fits a narrow dock
         self.buttons = []
-        options = params.get("options", [])
         primary = next((o["optionId"] for o in options if o.get("kind") == "allow_once"), None)
         for i, opt in enumerate(options):
             b = QtWidgets.QPushButton(opt["name"])
@@ -332,7 +334,28 @@ class Transcript(QtWidgets.QScrollArea):
     def permission(self, params, reply):
         self._assistant = None
         self._stick = True
-        self._add(PermissionCard(params, reply))
+        title = _tool_title(params.get("toolCall") or {})
+        self._add(PermissionCard(f"The agent wants to run {title}.", params.get("options", []), reply))
+
+    def sign_in(self, agent, methods, choose):
+        self._assistant = None
+        self._stick = True
+        options = [{"optionId": m["id"], "name": m["name"], "kind": "allow_once" if i == 0 else ""}
+                   for i, m in enumerate(methods)]
+        text = f"{agent} needs you to sign in. Pick how:"
+        self._add(PermissionCard(text, options, choose))
+
+
+def pill(name):
+    """Flat button that opens a menu, for compact pickers."""
+    b = QtWidgets.QToolButton()
+    b.setObjectName("pill")
+    b.setAccessibleName(name)
+    b.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+    b.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+    b.setMenu(QtWidgets.QMenu(b))
+    b.menu().setToolTipsVisible(True)
+    return b
 
 
 class Composer(QtWidgets.QFrame):
@@ -404,13 +427,7 @@ class Composer(QtWidgets.QFrame):
         return b
 
     def _pill(self, name):
-        b = QtWidgets.QToolButton()
-        b.setObjectName("pill")
-        b.setAccessibleName(name)
-        b.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
-        b.setPopupMode(QtWidgets.QToolButton.InstantPopup)
-        b.setMenu(QtWidgets.QMenu(b))
-        b.menu().setToolTipsVisible(True)
+        b = pill(name)
         b.hide()
         return b
 

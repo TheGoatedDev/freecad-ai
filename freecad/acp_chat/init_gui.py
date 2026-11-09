@@ -13,13 +13,21 @@ import traceback
 
 import FreeCAD as App
 import FreeCADGui as Gui
-from PySide import QtCore, QtWidgets
+from PySide import QtCore, QtGui, QtWidgets
 
 from freecad.acp_chat import context, mcp_server, ui
 from freecad.acp_chat.acp import AcpClient
 
 PREFS = App.ParamGet("User parameter:BaseApp/Preferences/Mod/ACPChat")
-DEFAULT_AGENT = "npx -y @agentclientprotocol/claude-agent-acp"
+# ACP agents offered in the provider menu: (name, shell command).
+PROVIDERS = [
+    ("Claude", "npx -y @agentclientprotocol/claude-agent-acp"),
+    ("Codex", "npx -y @agentclientprotocol/codex-acp"),
+    ("Gemini", "npx -y @google/gemini-cli --acp"),
+    ("opencode", "npx -y opencode-ai acp"),
+    ("GitHub Copilot", "npx -y @github/copilot --acp"),
+]
+DEFAULT_AGENT = PROVIDERS[0][1]
 FIRST_TURN_HINT = (
     "You are an assistant inside FreeCAD. Use the `freecad` MCP tools to inspect "
     "and modify the user's open session.\n\n"
@@ -91,7 +99,11 @@ class ChatDock(QtWidgets.QDockWidget):
         head.setContentsMargins(12, 6, 6, 6)
         title = QtWidgets.QLabel("AI Chat")
         title.setObjectName("title")
-        self.agent_label = ui._label(muted=True)
+        self.provider_btn = ui.pill("Provider")
+        self.provider_btn.setLayoutDirection(QtCore.Qt.RightToLeft)  # chevron after the text
+        self.provider_btn.menu().setLayoutDirection(QtCore.Qt.LeftToRight)
+        self.provider_btn.setIcon(ui.icon("chevron_down", self.t["muted"], 12))
+        self.provider_btn.menu().aboutToShow.connect(self._fill_provider_menu)
         new_btn = QtWidgets.QToolButton()
         new_btn.setObjectName("iconBtn")
         new_btn.setIcon(ui.icon("plus", self.t["muted"]))
@@ -99,7 +111,8 @@ class ChatDock(QtWidgets.QDockWidget):
         new_btn.setAccessibleName("New chat")
         new_btn.clicked.connect(self.restart)
         head.addWidget(title)
-        head.addWidget(self.agent_label, 1)
+        head.addWidget(self.provider_btn)
+        head.addStretch()
         head.addWidget(new_btn)
 
         self.transcript = ui.Transcript()
@@ -160,8 +173,9 @@ class ChatDock(QtWidgets.QDockWidget):
         self.first_turn = True
         self._set_state(ready=False, busy=False)
         cmd = PREFS.GetString("AgentCommand", DEFAULT_AGENT)
-        self.agent_label.setText("starting…")
-        self.agent_label.setToolTip(cmd)
+        name = next((n for n, c in PROVIDERS if c == cmd), "Custom")
+        self.provider_btn.setText(name)
+        self.provider_btn.setToolTip(f"Provider: {name}\n{cmd}")
         self.proc = QtCore.QProcess(self)
         if sys.platform == "win32":
             self.proc.setProgram("cmd")
@@ -184,11 +198,18 @@ class ChatDock(QtWidgets.QDockWidget):
             self._on_error,
         )
         self.proc.start()
-        self.client.start(_session_cwd(), _mcp_servers(), self._on_ready)
+        self.client.start(
+            _session_cwd(),
+            _mcp_servers(),
+            self._on_ready,
+            self._sign_in,
+        )
+
+    def _sign_in(self, methods, authenticate):
+        self.transcript.sign_in(self.provider_btn.text(), methods, authenticate)
+        self.composer.edit.setPlaceholderText("Sign in above to start")
 
     def _on_ready(self, _session_id):
-        info = self.client.agent_info
-        self.agent_label.setText(info.get("title") or info.get("name") or "")
         self._set_state(ready=True, busy=False)
         # Re-apply the user's last choices (model, effort, mode, ...) to the new session.
         for opt in self.client.config_options:
@@ -198,12 +219,44 @@ class ChatDock(QtWidgets.QDockWidget):
                 self.client.set_config(opt["id"], saved)
         self.composer.set_config_options(self.client.config_options)
 
+    def _fill_provider_menu(self):
+        menu = self.provider_btn.menu()
+        menu.clear()
+        current = PREFS.GetString("AgentCommand", DEFAULT_AGENT)
+        group = QtGui.QActionGroup(menu)
+        for name, cmd in PROVIDERS:
+            act = menu.addAction(name)
+            act.setCheckable(True)
+            act.setChecked(cmd == current)
+            act.setToolTip(cmd)
+            act.triggered.connect(lambda _=False, c=cmd: self._switch_provider(c))
+            group.addAction(act)
+        menu.addSeparator()
+        custom = menu.addAction("Custom command…")
+        custom.setCheckable(True)
+        custom.setChecked(current not in {c for _n, c in PROVIDERS})
+        custom.triggered.connect(self._custom_provider)
+        group.addAction(custom)
+
+    def _custom_provider(self):
+        current = PREFS.GetString("AgentCommand", DEFAULT_AGENT)
+        cmd, ok = QtWidgets.QInputDialog.getText(
+            self, "Custom ACP agent", "Shell command that starts an ACP agent on stdio:", text=current
+        )
+        if ok and cmd.strip():
+            self._switch_provider(cmd.strip())
+
+    def _switch_provider(self, cmd):
+        """Switching provider starts a new chat with the new agent."""
+        if cmd != PREFS.GetString("AgentCommand", DEFAULT_AGENT):
+            PREFS.SetString("AgentCommand", cmd)
+            self.restart()
+
     def _set_config(self, config_id, value):
         PREFS.SetString(f"Config_{config_id}", value)
         self.client.set_config(config_id, value)
 
     def _on_exit(self, code, _status):
-        self.agent_label.setText("stopped")
         self.transcript.notice(
             f"The agent stopped (exit code {code}). Its log is in the Report view. Start a new chat to try again.",
             error=True,

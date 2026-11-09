@@ -8,6 +8,7 @@ Spec: https://agentclientprotocol.com
 import json
 
 PROTOCOL_VERSION = 1
+AUTH_REQUIRED = -32000
 
 
 class AcpClient:
@@ -22,6 +23,7 @@ class AcpClient:
         self.session_id = None
         self.agent_capabilities = {}
         self.agent_info = {}
+        self.auth_methods = []
         self.config_options = []  # ACP session config options (mode, model, effort, ...)
 
     # -- outgoing ---------------------------------------------------------
@@ -30,16 +32,29 @@ class AcpClient:
         msg["jsonrpc"] = "2.0"
         self._write((json.dumps(msg) + "\n").encode("utf-8"))
 
-    def request(self, method, params, on_result=None):
+    def request(self, method, params, on_result=None, on_error=None):
         self._next_id += 1
-        self._pending[self._next_id] = (method, on_result)
+        self._pending[self._next_id] = (method, on_result, on_error)
         self._send({"id": self._next_id, "method": method, "params": params})
 
     def notify(self, method, params):
         self._send({"method": method, "params": params})
 
-    def start(self, cwd, mcp_servers, on_ready):
-        """initialize, then session/new; calls on_ready(session_id)."""
+    def start(self, cwd, mcp_servers, on_ready, on_auth_required=None):
+        """initialize, then session/new; calls on_ready(session_id). If the agent
+        needs sign-in, calls on_auth_required(methods, authenticate(method_id))."""
+
+        def new_session():
+            self.request("session/new", {"cwd": cwd, "mcpServers": mcp_servers}, got_session, session_failed)
+
+        def session_failed(err):
+            if err.get("code") == AUTH_REQUIRED and self.auth_methods and on_auth_required:
+                on_auth_required(
+                    self.auth_methods,
+                    lambda method_id: self.request("authenticate", {"methodId": method_id}, lambda _r: new_session()),
+                )
+            else:
+                self._on_error(f"session/new failed: {err.get('message')} {err.get('data') or ''}")
 
         def got_session(result):
             self.session_id = result["sessionId"]
@@ -49,11 +64,8 @@ class AcpClient:
         def initialized(result):
             self.agent_capabilities = result.get("agentCapabilities") or {}
             self.agent_info = result.get("agentInfo") or {}
-            self.request(
-                "session/new",
-                {"cwd": cwd, "mcpServers": mcp_servers},
-                got_session,
-            )
+            self.auth_methods = result.get("authMethods") or []
+            new_session()
 
         self.request(
             "initialize",
@@ -115,10 +127,13 @@ class AcpClient:
     def _dispatch(self, msg):
         method = msg.get("method")
         if method is None:  # response to one of our requests
-            name, on_result = self._pending.pop(msg.get("id"), (None, None))
+            name, on_result, on_error = self._pending.pop(msg.get("id"), (None, None, None))
             if "error" in msg:
                 err = msg["error"]
-                self._on_error(f"{name} failed: {err.get('message')} {err.get('data') or ''}")
+                if on_error:
+                    on_error(err)
+                else:
+                    self._on_error(f"{name} failed: {err.get('message')} {err.get('data') or ''}")
             elif on_result:
                 on_result(msg.get("result") or {})
         elif method == "session/update":

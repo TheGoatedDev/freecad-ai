@@ -19,6 +19,10 @@ Two toggles under the message box decide what goes with each message. Both are c
 
 The toggle states are saved between sessions.
 
+## Provider
+
+The menu next to the title switches the agent: Claude, Codex, Gemini, opencode, GitHub Copilot, or a custom command. Switching starts a new chat. If the agent needs you to sign in, the chat shows its sign-in options.
+
 ## Model and permissions
 
 Two buttons sit next to send. Each shows what the agent offers through ACP session config options.
