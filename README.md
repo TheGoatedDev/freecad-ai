@@ -19,6 +19,15 @@ Two toggles under the message box decide what goes with each message. Both are c
 
 The toggle states are saved between sessions.
 
+## Model and permissions
+
+Two buttons sit next to send. Each shows what the agent offers through ACP session config options.
+
+- **Permission** (shield) picks the permission mode, such as Manual, Accept edits, Plan, Auto or Bypass permissions.
+- **Model** opens the model list, an Effort submenu and on/off settings such as Fast mode. A bolt icon means Fast mode is on.
+
+Your choices are saved and applied again to each new chat.
+
 ## Settings
 
 Tools > Edit parameters > `BaseApp/Preferences/Mod/ACPChat`:

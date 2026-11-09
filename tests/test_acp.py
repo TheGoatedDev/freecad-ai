@@ -58,6 +58,22 @@ class AcpClientTest(unittest.TestCase):
         self.c.feed(line({"jsonrpc": "2.0", "id": 8, "method": "fs/read_text_file", "params": {}}))
         self.assertEqual(self.sent[-1]["error"]["code"], -32601)
 
+    def test_config_options(self):
+        mode = {"id": "mode", "category": "mode", "type": "select", "currentValue": "auto", "options": []}
+        self.c.session_id = "s1"
+        self.c.request("session/new", {}, lambda r: None)  # id 1 placeholder
+        self.c.feed(line({"jsonrpc": "2.0", "id": 1, "result": {}}))
+        self.c.set_config("mode", "plan")
+        self.assertEqual(self.sent[-1]["method"], "session/set_config_option")
+        self.assertEqual(self.sent[-1]["params"], {"sessionId": "s1", "configId": "mode", "value": "plan"})
+        self.c.feed(line({"jsonrpc": "2.0", "id": 2, "result": {"configOptions": [dict(mode, currentValue="plan")]}}))
+        self.assertEqual(self.c.config_options[0]["currentValue"], "plan")
+        self.assertEqual(self.updates[-1]["sessionUpdate"], "config_option_update")
+        # legacy mode notification is mirrored into the mode option
+        self.c.feed(line({"jsonrpc": "2.0", "method": "session/update",
+                          "params": {"sessionId": "s1", "update": {"sessionUpdate": "current_mode_update", "currentModeId": "default"}}}))
+        self.assertEqual(self.c.config_options[0]["currentValue"], "default")
+
     def test_error_response(self):
         self.c.request("initialize", {}, lambda r: self.fail("should not succeed"))
         self.c.feed(line({"jsonrpc": "2.0", "id": 1, "error": {"code": -32000, "message": "auth required"}}))

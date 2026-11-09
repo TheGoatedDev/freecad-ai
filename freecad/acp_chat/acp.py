@@ -22,6 +22,7 @@ class AcpClient:
         self.session_id = None
         self.agent_capabilities = {}
         self.agent_info = {}
+        self.config_options = []  # ACP session config options (mode, model, effort, ...)
 
     # -- outgoing ---------------------------------------------------------
 
@@ -42,6 +43,7 @@ class AcpClient:
 
         def got_session(result):
             self.session_id = result["sessionId"]
+            self.config_options = result.get("configOptions") or []
             on_ready(self.session_id)
 
         def initialized(result):
@@ -78,6 +80,19 @@ class AcpClient:
             lambda result: on_done(result.get("stopReason")),
         )
 
+    def set_config(self, config_id, value):
+        """Change one config option; the agent replies with the full updated list."""
+        self.request(
+            "session/set_config_option",
+            {"sessionId": self.session_id, "configId": config_id, "value": value},
+            lambda result: self._config_changed(result.get("configOptions")),
+        )
+
+    def _config_changed(self, options):
+        if options is not None:
+            self.config_options = options
+            self._on_update({"sessionUpdate": "config_option_update", "configOptions": options})
+
     def cancel(self):
         if self.session_id:
             self.notify("session/cancel", {"sessionId": self.session_id})
@@ -107,7 +122,16 @@ class AcpClient:
             elif on_result:
                 on_result(msg.get("result") or {})
         elif method == "session/update":
-            self._on_update(msg["params"]["update"])
+            update = msg["params"]["update"]
+            kind = update.get("sessionUpdate")
+            if kind == "config_option_update":
+                self.config_options = update.get("configOptions") or self.config_options
+            elif kind == "current_mode_update":  # legacy modes API; mirror it into the mode option
+                for opt in self.config_options:
+                    if opt.get("category") == "mode":
+                        opt["currentValue"] = update.get("currentModeId")
+                return self._on_update({"sessionUpdate": "config_option_update", "configOptions": self.config_options})
+            self._on_update(update)
         elif method == "session/request_permission" and "id" in msg:
             req_id = msg["id"]
 

@@ -115,6 +115,7 @@ class ChatDock(QtWidgets.QDockWidget):
         self.composer.sel_btn.setChecked(PREFS.GetBool("IncludeSelection", True))
         self.composer.view_btn.setChecked(PREFS.GetBool("IncludeView", False))
         self.composer.toggles_changed.connect(self._save_toggles)
+        self.composer.config_changed.connect(self._set_config)
         self.composer.unselect.connect(lambda key: Gui.Selection.removeSelection(*key))
         # Coalesce bursts of selection events (box select) into one refresh.
         self._sel_timer = QtCore.QTimer(self)
@@ -155,6 +156,7 @@ class ChatDock(QtWidgets.QDockWidget):
             self.proc.kill()
             self.proc.waitForFinished(2000)
         self.transcript.clear()
+        self.composer.set_config_options([])
         self.first_turn = True
         self._set_state(ready=False, busy=False)
         cmd = PREFS.GetString("AgentCommand", DEFAULT_AGENT)
@@ -188,6 +190,17 @@ class ChatDock(QtWidgets.QDockWidget):
         info = self.client.agent_info
         self.agent_label.setText(info.get("title") or info.get("name") or "")
         self._set_state(ready=True, busy=False)
+        # Re-apply the user's last choices (model, effort, mode, ...) to the new session.
+        for opt in self.client.config_options:
+            saved = PREFS.GetString(f"Config_{opt['id']}", "")
+            values = {c["value"] for c in opt.get("options", [])}
+            if saved in values and saved != opt.get("currentValue"):
+                self.client.set_config(opt["id"], saved)
+        self.composer.set_config_options(self.client.config_options)
+
+    def _set_config(self, config_id, value):
+        PREFS.SetString(f"Config_{config_id}", value)
+        self.client.set_config(config_id, value)
 
     def _on_exit(self, code, _status):
         self.agent_label.setText("stopped")
@@ -239,6 +252,8 @@ class ChatDock(QtWidgets.QDockWidget):
             self.transcript.assistant_chunk(update["content"]["text"])
         elif kind in ("tool_call", "tool_call_update"):
             self.transcript.tool(update)
+        elif kind == "config_option_update":
+            self.composer.set_config_options(self.client.config_options)
 
     def _on_error(self, message):
         self.transcript.notice(message, error=True)

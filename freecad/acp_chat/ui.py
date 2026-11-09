@@ -21,6 +21,9 @@ _ICONS = {
     "alert": '<circle cx="8" cy="8" r="6.25"/><path d="M8 4.75v4M8 11.25v.01"/>',
     "chevron": '<path d="M6 4l4 4-4 4"/>',
     "dot": '<circle cx="8" cy="8" r="3" fill="currentColor"/>',
+    "shield": '<path d="M8 1.75 13.25 3.75v4c0 3.2-2.2 5.6-5.25 6.5-3.05-.9-5.25-3.3-5.25-6.5v-4Z"/>',
+    "sparkle": '<path d="M8 2c.6 3.2 1.8 4.4 5 5-3.2.6-4.4 1.8-5 5-.6-3.2-1.8-4.4-5-5 3.2-.6 4.4-1.8 5-5Z"/>',
+    "bolt": '<path d="M9 1.75 3.75 9h4l-1 5.25L12.25 7h-4Z"/>',
 }
 
 
@@ -102,6 +105,9 @@ QScrollArea {{ border: none; background: transparent; }}
 #chatRoot QToolButton#iconBtn {{ border: none; border-radius: 6px; padding: 4px; }}
 #chatRoot QToolButton#iconBtn:hover {{ background: {panel}; }}
 #chatRoot QToolButton#iconBtn:checked {{ background: {accent_soft}; }}
+#chatRoot QToolButton#pill {{ border: none; border-radius: 6px; padding: 3px 6px; color: {muted}; }}
+#chatRoot QToolButton#pill:hover {{ background: {panel}; color: {text}; }}
+#chatRoot QToolButton#pill::menu-indicator {{ image: none; width: 0; }}
 QPushButton#sendBtn {{ background: {accent}; border: none; border-radius: 14px; padding: 0; }}
 QPushButton#sendBtn:disabled {{ background: {border}; }}
 QPushButton#primary {{ background: {accent}; color: {accent_text}; border: none; border-radius: 6px; padding: 5px 12px; }}
@@ -338,6 +344,7 @@ class Composer(QtWidgets.QFrame):
     send = QtCore.Signal(str)
     stop = QtCore.Signal()
     toggles_changed = QtCore.Signal()
+    config_changed = QtCore.Signal(str, str)  # ACP config option id, value
     unselect = QtCore.Signal(object)  # one item from set_selection()
 
     def __init__(self, t):
@@ -366,6 +373,11 @@ class Composer(QtWidgets.QFrame):
         for w in (self.sel_btn, self.view_btn):
             bottom.addWidget(w)
         bottom.addStretch()
+        self.perm_btn = self._pill("Permission mode")
+        self.model_btn = self._pill("Model, effort and speed")
+        bottom.addWidget(self.perm_btn)
+        bottom.addWidget(self.model_btn)
+        bottom.addSpacing(4)
         bottom.addWidget(self.send_btn)
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(8, 8, 8, 6)
@@ -390,6 +402,79 @@ class Composer(QtWidgets.QFrame):
         b.setIcon(toggle_icon(name, self.t["muted"], self.t["accent"]))
         b.toggled.connect(lambda _on: (self._render_chips(), self.toggles_changed.emit()))
         return b
+
+    def _pill(self, name):
+        b = QtWidgets.QToolButton()
+        b.setObjectName("pill")
+        b.setAccessibleName(name)
+        b.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        b.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+        b.setMenu(QtWidgets.QMenu(b))
+        b.menu().setToolTipsVisible(True)
+        b.hide()
+        return b
+
+    def _select_menu(self, menu, opt):
+        """Exclusive checkable entries for one select option."""
+        group = QtGui.QActionGroup(menu)
+        for choice in opt.get("options", []):
+            act = menu.addAction(choice["name"])
+            act.setCheckable(True)
+            act.setChecked(choice["value"] == opt.get("currentValue"))
+            act.setToolTip(choice.get("description", ""))
+            act.triggered.connect(lambda _=False, i=opt["id"], v=choice["value"]: self.config_changed.emit(i, v))
+            group.addAction(act)
+
+    def set_config_options(self, options):
+        """Permission pill: the `mode` option. Model pill: the model list, then
+        thought-level and model-config options (on/off ones become toggles)."""
+        selects = [o for o in options if o.get("type") == "select"]
+
+        def current(opt):
+            return next((c for c in opt.get("options", []) if c["value"] == opt.get("currentValue")), {})
+
+        mode = next((o for o in selects if o.get("category") == "mode"), None)
+        self.perm_btn.setVisible(mode is not None)
+        if mode:
+            self.perm_btn.menu().clear()
+            self._select_menu(self.perm_btn.menu(), mode)
+            self.perm_btn.setText(current(mode).get("name", ""))
+            self.perm_btn.setIcon(icon("shield", self.t["muted"], 14))
+            self.perm_btn.setToolTip(f"Permissions: {current(mode).get('description') or current(mode).get('name')}")
+
+        model = next((o for o in selects if o.get("category") == "model"), None)
+        extras = [o for o in selects if o.get("category") in ("thought_level", "model_config")]
+        self.model_btn.setVisible(bool(model or extras))
+        menu = self.model_btn.menu()
+        menu.clear()
+        if model:
+            self._select_menu(menu, model)
+        if extras:
+            menu.addSeparator()
+        tip, fast = [], False
+        for opt in extras:
+            values = {c["value"] for c in opt.get("options", [])}
+            if values == {"on", "off"}:
+                on = opt.get("currentValue") == "on"
+                fast = fast or (opt["id"] == "fast" and on)
+                act = menu.addAction(opt["name"])
+                act.setCheckable(True)
+                act.setChecked(on)
+                act.setToolTip(opt.get("description", ""))
+                act.triggered.connect(lambda checked, i=opt["id"]: self.config_changed.emit(i, "on" if checked else "off"))
+            else:
+                sub = menu.addMenu(f"{opt['name']}: {current(opt).get('name', '')}")
+                sub.setToolTipsVisible(True)
+                self._select_menu(sub, opt)
+            tip.append(f"{opt['name']}: {current(opt).get('name', opt.get('currentValue'))}")
+        if model:
+            name = current(model).get("name", "")
+            # "Default (recommended)" says less than the model it stands for
+            label = current(model).get("description") if name.startswith("Default") else name
+            self.model_btn.setText(label if len(label) <= 16 else label[:15] + "…")
+            tip.insert(0, f"Model: {label}")
+        self.model_btn.setIcon(icon("bolt" if fast else "sparkle", self.t["accent"] if fast else self.t["muted"], 14))
+        self.model_btn.setToolTip("\n".join(tip))
 
     def eventFilter(self, obj, event):
         if event.type() == QtCore.QEvent.KeyPress and event.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
