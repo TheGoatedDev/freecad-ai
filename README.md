@@ -6,7 +6,7 @@
 
 **Chat with Claude, Codex, Gemini or any ACP agent inside FreeCAD, and let it model in your open document.**
 
-[![FreeCAD 1.1+](https://img.shields.io/badge/FreeCAD-1.1%2B-14161a?logo=freecad&logoColor=white)](https://www.freecad.org) [![Agent Client Protocol](https://img.shields.io/badge/protocol-ACP-3d7ff5)](https://agentclientprotocol.com) [![No dependencies](https://img.shields.io/badge/dependencies-none-14161a)](#install) [![License: MIT](https://img.shields.io/badge/license-MIT-14161a)](LICENSE)
+[![CI](https://github.com/TheGoatedDev/freecad-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/TheGoatedDev/freecad-ai/actions/workflows/ci.yml) [![FreeCAD 1.1+](https://img.shields.io/badge/FreeCAD-1.1%2B-14161a?logo=freecad&logoColor=white)](https://www.freecad.org) [![Agent Client Protocol](https://img.shields.io/badge/protocol-ACP-3d7ff5)](https://agentclientprotocol.com) [![No dependencies](https://img.shields.io/badge/dependencies-none-14161a)](#install) [![License: MIT](https://img.shields.io/badge/license-MIT-14161a)](LICENSE)
 
 [Install](#install) · [Usage](#usage) · [Providers](#providers) · [How it works](#how-it-works) · [Security](#security) · [Development](#development)
 
@@ -127,6 +127,14 @@ uv run ruff format .
 uv run mypy
 uv run python -m unittest discover tests
 ```
+
+Turn on the git hooks once per clone:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+`pre-commit` runs ruff. `pre-push` runs mypy and the tests. CI runs all of them on every push to `main` and every pull request.
 
 mypy skips `FreeCAD`, `FreeCADGui` and `PySide`, which only exist inside FreeCAD. The unit tests cover the ACP client and the MCP server without FreeCAD. The panel itself was tested by driving FreeCAD on macOS. Linux and Windows are untested.
 

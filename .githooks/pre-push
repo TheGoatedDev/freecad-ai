@@ -1,0 +1,5 @@
+#!/bin/sh
+# Type check and tests, the slower half of CI.
+set -e
+uv run --quiet mypy
+uv run --quiet python -m unittest discover -q tests

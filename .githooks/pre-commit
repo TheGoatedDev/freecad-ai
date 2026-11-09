@@ -1,0 +1,5 @@
+#!/bin/sh
+# Lint and format check, so CI's ruff steps don't fail after a push.
+set -e
+uv run --quiet ruff check .
+uv run --quiet ruff format --check .
