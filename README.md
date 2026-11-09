@@ -136,7 +136,7 @@ git config core.hooksPath .githooks
 
 `pre-commit` runs ruff. `pre-push` runs mypy and the tests. CI runs all of them on every push to `main` and every pull request.
 
-mypy skips `FreeCAD`, `FreeCADGui` and `PySide`, which only exist inside FreeCAD. The unit tests cover the ACP client and the MCP server without FreeCAD. The panel itself was tested by driving FreeCAD on macOS. Linux and Windows are untested.
+mypy runs in strict mode. It skips `FreeCAD`, `FreeCADGui` and `PySide`, which only exist inside FreeCAD. The unit tests cover the ACP client and the MCP server without FreeCAD. The panel itself was tested by driving FreeCAD on macOS. Linux and Windows are untested.
 
 ## License
 

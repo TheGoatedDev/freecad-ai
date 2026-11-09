@@ -4,8 +4,14 @@ panel follows whatever FreeCAD theme is loaded."""
 
 import base64
 import json
+from collections.abc import Callable
+from typing import Any
 
 from PySide import QtCore, QtGui, QtSvg, QtWidgets
+
+from freecad.acp_chat.acp import Json, Reply
+
+Theme = dict[str, str]
 
 # 16px line icons, 1.5 stroke, drawn in the current text colour.
 _ICONS = {
@@ -28,7 +34,7 @@ _ICONS = {
 }
 
 
-def icon(name, color, size=16):
+def icon(name: str, color: str, size: int = 16) -> QtGui.QIcon:
     svg = (
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="currentColor" '
         f'stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">{_ICONS[name]}</svg>'
@@ -43,20 +49,21 @@ def icon(name, color, size=16):
     return QtGui.QIcon(pm)
 
 
-def toggle_icon(name, off_color, on_color):
+def toggle_icon(name: str, off_color: str, on_color: str) -> QtGui.QIcon:
     out = QtGui.QIcon()
     for color, state in ((off_color, QtGui.QIcon.Off), (on_color, QtGui.QIcon.On)):
         out.addPixmap(icon(name, color).pixmap(16, 16), QtGui.QIcon.Normal, state)
     return out
 
 
-def _mix(a, b, t):
-    return QtGui.QColor.fromRgbF(
+def _mix(a: QtGui.QColor, b: QtGui.QColor, t: float) -> str:
+    name: str = QtGui.QColor.fromRgbF(
         *(x * t + y * (1 - t) for x, y in zip(a.getRgbF()[:3], b.getRgbF()[:3], strict=True))
     ).name()
+    return name
 
 
-def theme(parent):
+def theme(parent: QtWidgets.QWidget) -> Theme:
     """Colours as the active theme renders them. FreeCAD themes restyle widgets with
     QSS that can contradict the QPalette, so sample real styled widgets instead."""
     probe = QtWidgets.QWidget(parent)
@@ -84,7 +91,7 @@ def theme(parent):
     }
 
 
-def stylesheet(t):
+def stylesheet(t: Theme) -> str:
     return """
 #chatRoot, #transcriptBody {{ background: {window}; color: {text}; }}
 #chatRoot QLabel, #chatRoot QToolButton {{ background: transparent; color: {text}; }}
@@ -121,7 +128,7 @@ QPushButton#secondary:hover {{ background: {panel}; }}
 """.format(**t)
 
 
-def _label(text="", muted=False, fmt=QtCore.Qt.PlainText):
+def _label(text: str = "", muted: bool = False, fmt: Any = QtCore.Qt.PlainText) -> QtWidgets.QLabel:
     lab = QtWidgets.QLabel(text)
     lab.setTextFormat(fmt)
     lab.setWordWrap(True)
@@ -132,24 +139,25 @@ def _label(text="", muted=False, fmt=QtCore.Qt.PlainText):
     return lab
 
 
-def _thumb(image_block, height=44):
+def _thumb(image_block: Json, height: int = 44) -> QtGui.QPixmap:
     pm = QtGui.QPixmap()
     pm.loadFromData(base64.b64decode(image_block["data"]))
     return pm.scaledToHeight(height, QtCore.Qt.SmoothTransformation)
 
 
-def _tool_title(update):
-    title = update.get("title") or "tool"
+def _tool_title(update: Json) -> str:
+    title: str = update.get("title") or "tool"
     return title.split("__")[-1] if title.startswith("mcp__") else title
 
 
 class ToolRow(QtWidgets.QWidget):
     """One agent tool call: status icon + name + first line of input; click to expand."""
 
-    def __init__(self, t, update):
+    def __init__(self, t: Theme, update: Json) -> None:
         super().__init__()
         self.t = t
-        self.state: dict = {"status": "pending"}
+        self._text = ""
+        self.state: Json = {"status": "pending"}
         self.button = QtWidgets.QToolButton()
         self.button.setObjectName("toolRow")
         self.button.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
@@ -170,7 +178,7 @@ class ToolRow(QtWidgets.QWidget):
         lay.addWidget(self.detail)
         self.update_from(update)
 
-    def update_from(self, update):
+    def update_from(self, update: Json) -> None:
         self.state.update({k: v for k, v in update.items() if v is not None})
         s = self.state
         code = (s.get("rawInput") or {}).get("code") if isinstance(s.get("rawInput"), dict) else None
@@ -195,20 +203,20 @@ class ToolRow(QtWidgets.QWidget):
         )
         self._fit()
 
-    def resizeEvent(self, event):
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)
         self._elide()
 
-    def _elide(self):
+    def _elide(self) -> None:
         room = self.button.width() - self.button.iconSize().width() - 24
         self.button.setText(self.button.fontMetrics().elidedText(self._text, QtCore.Qt.ElideRight, max(room, 40)))
         self.button.setToolTip(self._text)
 
-    def _toggle(self, open_):
+    def _toggle(self, open_: bool) -> None:
         self.detail.setVisible(open_)
         QtCore.QTimer.singleShot(0, self._fit)  # wrapped height is known only once laid out
 
-    def _fit(self):
+    def _fit(self) -> None:
         lines = self.detail.document().size().height() + 1
         self.detail.setFixedHeight(int(min(240, lines * self.detail.fontMetrics().lineSpacing() + 12)))
 
@@ -217,14 +225,14 @@ class PermissionCard(QtWidgets.QFrame):
     """Inline question with one button per option; options are ACP-shaped
     ({optionId, name, kind}) and reply(optionId) is called once."""
 
-    def __init__(self, text, options, reply):
+    def __init__(self, text: str, options: list[Json], reply: Callable[[str], None]) -> None:
         super().__init__()
         self.setObjectName("permCard")
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(12, 10, 12, 10)
         lay.addWidget(_label(text))
         grid = QtWidgets.QGridLayout()  # two per row so the card fits a narrow dock
-        self.buttons = []
+        self.buttons: list[QtWidgets.QPushButton] = []
         primary = next((o["optionId"] for o in options if o.get("kind") == "allow_once"), None)
         for i, opt in enumerate(options):
             b = QtWidgets.QPushButton(opt["name"])
@@ -237,7 +245,7 @@ class PermissionCard(QtWidgets.QFrame):
         self.result.hide()
         lay.addWidget(self.result)
 
-    def _choose(self, reply, option):
+    def _choose(self, reply: Callable[[str], None], option: Json) -> None:
         for b in self.buttons:
             b.setEnabled(False)
         self.result.setText(f"You chose: {option['name']}")
@@ -246,7 +254,7 @@ class PermissionCard(QtWidgets.QFrame):
 
 
 class Transcript(QtWidgets.QScrollArea):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
@@ -258,29 +266,34 @@ class Transcript(QtWidgets.QScrollArea):
         self.lay.addStretch()
         self.setWidget(body)
         self.t = theme(self)
-        self.tools = {}
-        self._assistant = None
+        self.tools: dict[str, ToolRow] = {}
+        self._assistant: QtWidgets.QLabel | None = None
+        self._raw = ""
         self._stick = True
         self.empty: QtWidgets.QWidget | None = None
         self.verticalScrollBar().valueChanged.connect(self._track_bottom)
-        self.verticalScrollBar().rangeChanged.connect(lambda *_: self._stick and self._to_bottom())
+        self.verticalScrollBar().rangeChanged.connect(self._on_range)
         self.clear()
 
-    def _track_bottom(self, value):
+    def _track_bottom(self, value: int) -> None:
         bar = self.verticalScrollBar()
         self._stick = value >= bar.maximum() - 24
 
-    def _to_bottom(self):
+    def _on_range(self, *_range: int) -> None:
+        if self._stick:
+            self._to_bottom()
+
+    def _to_bottom(self) -> None:
         self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
 
-    def _add(self, widget):
+    def _add(self, widget: Any) -> Any:
         if self.empty is not None:
             self.empty.deleteLater()
             self.empty = None
         self.lay.insertWidget(self.lay.count() - 1, widget)
         return widget
 
-    def clear(self):
+    def clear(self) -> None:
         while self.lay.count() > 1:
             self.lay.takeAt(0).widget().deleteLater()
         self.tools, self._assistant = {}, None
@@ -299,7 +312,7 @@ class Transcript(QtWidgets.QScrollArea):
         )
         self.lay.insertWidget(0, self.empty)
 
-    def user(self, text, attachments):
+    def user(self, text: str, attachments: list[tuple[str, Json]]) -> None:
         box = QtWidgets.QFrame()
         box.setObjectName("userMsg")
         lay = QtWidgets.QVBoxLayout(box)
@@ -323,22 +336,23 @@ class Transcript(QtWidgets.QScrollArea):
         self._stick = True
         self._add(box)
 
-    def assistant_chunk(self, text):
+    def assistant_chunk(self, text: str) -> None:
         if self._assistant is None:
             self._assistant = self._add(_label(fmt=QtCore.Qt.MarkdownText))
-            self._assistant.raw = ""
-        self._assistant.raw += text
-        self._assistant.setText(self._assistant.raw)
+            self._raw = ""
+        self._raw += text
+        self._assistant.setText(self._raw)
 
-    def tool(self, update):
-        row = self.tools.get(update.get("toolCallId"))
+    def tool(self, update: Json) -> None:
+        key = str(update.get("toolCallId"))
+        row = self.tools.get(key)
         if row is None:
-            row = self.tools[update.get("toolCallId")] = self._add(ToolRow(self.t, update))
+            row = self.tools[key] = self._add(ToolRow(self.t, update))
             self._assistant = None
         else:
             row.update_from(update)
 
-    def notice(self, text, error=False):
+    def notice(self, text: str, error: bool = False) -> None:
         row = QtWidgets.QHBoxLayout()
         pic = QtWidgets.QLabel()
         pic.setPixmap(icon("alert", self.t["error" if error else "muted"], 14).pixmap(14, 14))
@@ -353,13 +367,13 @@ class Transcript(QtWidgets.QScrollArea):
         self._assistant = None
         self._add(holder)
 
-    def permission(self, params, reply):
+    def permission(self, params: Json, reply: Reply) -> None:
         self._assistant = None
         self._stick = True
         title = _tool_title(params.get("toolCall") or {})
         self._add(PermissionCard(f"The agent wants to run {title}.", params.get("options", []), reply))
 
-    def sign_in(self, agent, methods, choose):
+    def sign_in(self, agent: str, methods: list[Json], choose: Callable[[str], None]) -> None:
         self._assistant = None
         self._stick = True
         options = [
@@ -370,7 +384,7 @@ class Transcript(QtWidgets.QScrollArea):
         self._add(PermissionCard(text, options, choose))
 
 
-def pill(name):
+def pill(name: str) -> QtWidgets.QToolButton:
     """Flat button that opens a menu, for compact pickers."""
     b = QtWidgets.QToolButton()
     b.setObjectName("pill")
@@ -394,12 +408,13 @@ class Composer(QtWidgets.QFrame):
     config_changed = QtCore.Signal(str, str)  # ACP config option id, value
     unselect = QtCore.Signal(object)  # one item from set_selection()
 
-    def __init__(self, t):
+    def __init__(self, t: Theme) -> None:
         super().__init__()
         self.setObjectName("composer")
         self.t = t
-        self.selection = []  # [(label, key)] for the live preview
+        self.selection: list[tuple[str, tuple[str, str, str]]] = []  # (label, key) for the live preview
         self.busy = False
+        self.ready = False
         self.chips = QtWidgets.QGridLayout()  # two per row so chips never widen a narrow dock
         self.chips.setSpacing(6)
         self.chips.setColumnStretch(2, 1)
@@ -435,7 +450,7 @@ class Composer(QtWidgets.QFrame):
         self._grow()
         self.set_state(ready=False, busy=False)
 
-    def _icon_btn(self, name, tip):
+    def _icon_btn(self, name: str, tip: str) -> QtWidgets.QToolButton:
         b = QtWidgets.QToolButton()
         b.setObjectName("iconBtn")
         b.setIcon(icon(name, self.t["muted"]))
@@ -443,19 +458,23 @@ class Composer(QtWidgets.QFrame):
         b.setAccessibleName(tip.split(":")[0])
         return b
 
-    def _toggle(self, name, tip):
+    def _toggle(self, name: str, tip: str) -> QtWidgets.QToolButton:
         b = self._icon_btn(name, tip)
         b.setCheckable(True)
         b.setIcon(toggle_icon(name, self.t["muted"], self.t["accent"]))
-        b.toggled.connect(lambda _on: (self._render_chips(), self.toggles_changed.emit()))
+        b.toggled.connect(self._on_toggled)
         return b
 
-    def _pill(self, name):
+    def _on_toggled(self, _on: bool) -> None:
+        self._render_chips()
+        self.toggles_changed.emit()
+
+    def _pill(self, name: str) -> QtWidgets.QToolButton:
         b = pill(name)
         b.hide()
         return b
 
-    def _select_menu(self, menu, opt):
+    def _select_menu(self, menu: QtWidgets.QMenu, opt: Json) -> None:
         """Exclusive checkable entries for one select option."""
         group = QtGui.QActionGroup(menu)
         for choice in opt.get("options", []):
@@ -466,12 +485,12 @@ class Composer(QtWidgets.QFrame):
             act.triggered.connect(lambda _=False, i=opt["id"], v=choice["value"]: self.config_changed.emit(i, v))
             group.addAction(act)
 
-    def set_config_options(self, options):
+    def set_config_options(self, options: list[Json]) -> None:
         """Permission pill: the `mode` option. Model pill: the model list, then
         thought-level and model-config options (on/off ones become toggles)."""
         selects = [o for o in options if o.get("type") == "select"]
 
-        def current(opt):
+        def current(opt: Json) -> Json:
             return next((c for c in opt.get("options", []) if c["value"] == opt.get("currentValue")), {})
 
         mode = next((o for o in selects if o.get("category") == "mode"), None)
@@ -492,7 +511,8 @@ class Composer(QtWidgets.QFrame):
             self._select_menu(menu, model)
         if extras:
             menu.addSeparator()
-        tip, fast = [], False
+        tip: list[str] = []
+        fast = False
         for opt in extras:
             values = {c["value"] for c in opt.get("options", [])}
             if values == {"on", "off"}:
@@ -513,13 +533,13 @@ class Composer(QtWidgets.QFrame):
         if model:
             name = current(model).get("name", "")
             # "Default (recommended)" says less than the model it stands for
-            label = current(model).get("description") if name.startswith("Default") else name
+            label = str(current(model).get("description") or name) if name.startswith("Default") else name
             self.model_btn.setText(label if len(label) <= 16 else label[:15] + "…")
             tip.insert(0, f"Model: {label}")
         self.model_btn.setIcon(icon("bolt" if fast else "sparkle", self.t["accent"] if fast else self.t["muted"], 14))
         self.model_btn.setToolTip("\n".join(tip))
 
-    def eventFilter(self, obj, event):
+    def eventFilter(self, obj: QtCore.QObject, event: QtCore.QEvent) -> bool:
         if event.type() == QtCore.QEvent.KeyPress and event.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
             if not event.modifiers() & QtCore.Qt.ShiftModifier:
                 self._send_or_stop(from_key=True)
@@ -528,13 +548,13 @@ class Composer(QtWidgets.QFrame):
             self.setProperty("focus", event.type() == QtCore.QEvent.FocusIn)
             self.style().unpolish(self)
             self.style().polish(self)
-        return super().eventFilter(obj, event)
+        return bool(super().eventFilter(obj, event))
 
-    def _grow(self):
+    def _grow(self) -> None:
         lines = max(1, min(8, int(self.edit.document().size().height())))
         self.edit.setFixedHeight(lines * self.edit.fontMetrics().lineSpacing() + 10)
 
-    def _send_or_stop(self, from_key=False):
+    def _send_or_stop(self, from_key: bool = False) -> None:
         if self.busy:
             if not from_key:
                 self.stop.emit()
@@ -544,7 +564,7 @@ class Composer(QtWidgets.QFrame):
             self.edit.clear()
             self.send.emit(text)
 
-    def set_state(self, ready, busy):
+    def set_state(self, ready: bool, busy: bool) -> None:
         self.ready, self.busy = ready, busy
         self.send_btn.setEnabled(ready or busy)
         name = "stop" if busy else "send"
@@ -554,11 +574,11 @@ class Composer(QtWidgets.QFrame):
         self.send_btn.setAccessibleName("Stop" if busy else "Send")
         self.edit.setPlaceholderText("Ask anything about the model" if ready or busy else "Starting agent…")
 
-    def set_selection(self, items):
+    def set_selection(self, items: list[tuple[str, tuple[str, str, str]]]) -> None:
         self.selection = items
         self._render_chips()
 
-    def _chip(self, text, tip, on_remove, pic=None):
+    def _chip(self, text: str, tip: str, on_remove: Callable[..., object] | None, pic: str | None = None) -> None:
         chip = QtWidgets.QFrame()
         chip.setObjectName("chip")
         chip.setToolTip(tip)
@@ -578,7 +598,7 @@ class Composer(QtWidgets.QFrame):
         n = self.chips.count()
         self.chips.addWidget(chip, n // 2, n % 2, QtCore.Qt.AlignLeft)
 
-    def _render_chips(self):
+    def _render_chips(self) -> None:
         while self.chips.count():
             item = self.chips.takeAt(0)
             if item.widget():

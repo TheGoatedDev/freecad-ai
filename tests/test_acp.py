@@ -2,19 +2,20 @@
 
 import json
 import unittest
+from typing import Any
 
 from freecad.acp_chat.acp import AcpClient
 
 
-def line(msg):
+def line(msg: dict[str, Any]) -> bytes:
     return (json.dumps(msg) + "\n").encode()
 
 
 class AcpClientTest(unittest.TestCase):
-    def setUp(self):
-        self.sent: list[dict] = []
-        self.updates: list[dict] = []
-        self.perms: list[tuple] = []
+    def setUp(self) -> None:
+        self.sent: list[dict[str, Any]] = []
+        self.updates: list[dict[str, Any]] = []
+        self.perms: list[tuple[dict[str, Any], Any]] = []
         self.errors: list[str] = []
         self.c = AcpClient(
             lambda b: self.sent.append(json.loads(b)),
@@ -23,9 +24,9 @@ class AcpClientTest(unittest.TestCase):
             self.errors.append,
         )
 
-    def test_handshake_prompt_and_updates(self):
+    def test_handshake_prompt_and_updates(self) -> None:
         ready: list[str] = []
-        done: list[str] = []
+        done: list[str | None] = []
         self.c.start("/tmp", [{"type": "http", "name": "freecad", "url": "u", "headers": []}], ready.append)
         self.assertEqual(self.sent[0]["method"], "initialize")
         self.c.feed(
@@ -56,7 +57,7 @@ class AcpClientTest(unittest.TestCase):
         self.assertEqual(self.updates, [upd])
         self.assertEqual(done, ["end_turn"])
 
-    def test_permission_reply_and_unknown_method(self):
+    def test_permission_reply_and_unknown_method(self) -> None:
         self.c.feed(
             line(
                 {
@@ -76,7 +77,7 @@ class AcpClientTest(unittest.TestCase):
         self.c.feed(line({"jsonrpc": "2.0", "id": 8, "method": "fs/read_text_file", "params": {}}))
         self.assertEqual(self.sent[-1]["error"]["code"], -32601)
 
-    def test_config_options(self):
+    def test_config_options(self) -> None:
         mode = {"id": "mode", "category": "mode", "type": "select", "currentValue": "auto", "options": []}
         self.c.session_id = "s1"
         self.c.request("session/new", {}, lambda r: None)  # id 1 placeholder
@@ -102,9 +103,9 @@ class AcpClientTest(unittest.TestCase):
         )
         self.assertEqual(self.c.config_options[0]["currentValue"], "default")
 
-    def test_auth_required_then_retry(self):
+    def test_auth_required_then_retry(self) -> None:
         ready: list[str] = []
-        asked: list[tuple] = []
+        asked: list[tuple[Any, Any]] = []
         self.c.start("/tmp", [], ready.append, lambda methods, auth: asked.append((methods, auth)))
         self.c.feed(
             line({"jsonrpc": "2.0", "id": 1, "result": {"authMethods": [{"id": "chat-gpt", "name": "ChatGPT"}]}})
@@ -119,7 +120,7 @@ class AcpClientTest(unittest.TestCase):
         self.c.feed(line({"jsonrpc": "2.0", "id": 4, "result": {"sessionId": "s9"}}))
         self.assertEqual(ready, ["s9"])
 
-    def test_error_response(self):
+    def test_error_response(self) -> None:
         self.c.request("initialize", {}, lambda r: self.fail("should not succeed"))
         self.c.feed(line({"jsonrpc": "2.0", "id": 1, "error": {"code": -32000, "message": "auth required"}}))
         self.assertIn("auth required", self.errors[0])

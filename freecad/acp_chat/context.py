@@ -3,17 +3,18 @@
 import base64
 import os
 import tempfile
+from typing import Any
 
 import FreeCADGui as Gui
 
 MAX_VIEW_SIDE = 1280
 
 
-def _v(p):
+def _v(p: Any) -> str:
     return f"({p.x:.3f}, {p.y:.3f}, {p.z:.3f})"
 
 
-def _geometry(sub):
+def _geometry(sub: Any) -> str:
     """Short geometric summary of a sub-shape so the agent can locate it."""
     kind = getattr(sub, "ShapeType", None)
     if kind == "Face":
@@ -35,12 +36,12 @@ def _geometry(sub):
         return ", ".join(parts)
     if kind == "Vertex":
         return f"point {_v(sub.Point)}"
-    return kind or type(sub).__name__
+    return str(kind or type(sub).__name__)
 
 
-def selection_items():
+def selection_items() -> list[tuple[str, tuple[str, str, str]]]:
     """[(chip label, (doc, object, sub-element))] for the current selection."""
-    items = []
+    items: list[tuple[str, tuple[str, str, str]]] = []
     for sel in Gui.Selection.getSelectionEx("", 0):
         obj = sel.Object
         for name in sel.SubElementNames or [""]:
@@ -49,9 +50,9 @@ def selection_items():
     return items
 
 
-def selection_text():
+def selection_text() -> str | None:
     """Describe the current selection, or return None if nothing is selected."""
-    lines = []
+    lines: list[str] = []
     for sel in Gui.Selection.getSelectionEx():
         obj = sel.Object
         head = f"{sel.DocumentName}.{obj.Name} (label '{obj.Label}', {obj.TypeId})"
@@ -71,7 +72,7 @@ def selection_text():
     return "The user selected these elements in FreeCAD (mm):\n" + "\n".join(lines)
 
 
-def view_image():
+def view_image() -> str | None:
     """PNG of the active 3D view as base64, or None if there is no 3D view."""
     gui_doc = Gui.ActiveDocument
     view = gui_doc and gui_doc.ActiveView

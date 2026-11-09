@@ -10,13 +10,15 @@ import io
 import os
 import sys
 import traceback
+from collections.abc import Callable
+from typing import Any
 
 import FreeCAD as App
 import FreeCADGui as Gui
 from PySide import QtCore, QtGui, QtWidgets
 
 from freecad.acp_chat import context, mcp_server, ui
-from freecad.acp_chat.acp import AcpClient
+from freecad.acp_chat.acp import AcpClient, Json
 
 PREFS = App.ParamGet("User parameter:BaseApp/Preferences/Mod/ACPChat")
 # ACP agents offered in the provider menu: (name, shell command).
@@ -39,13 +41,13 @@ class _GuiRunner(QtCore.QObject):
 
     _call = QtCore.Signal(object)
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
-        self.namespace = {"FreeCAD": App, "App": App, "FreeCADGui": Gui, "Gui": Gui}
+        self.namespace: dict[str, Any] = {"FreeCAD": App, "App": App, "FreeCADGui": Gui, "Gui": Gui}
         self._call.connect(self._run, QtCore.Qt.BlockingQueuedConnection)
 
     @QtCore.Slot(object)
-    def _run(self, job):
+    def _run(self, job: dict[str, Any]) -> None:
         out = io.StringIO()
         try:
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
@@ -54,16 +56,17 @@ class _GuiRunner(QtCore.QObject):
         except BaseException:
             job["result"] = (out.getvalue() + traceback.format_exc(), False)
 
-    def __call__(self, code):  # called from the HTTP server thread
-        job = {"code": code}
+    def __call__(self, code: str) -> tuple[str, bool]:  # called from the HTTP server thread
+        job: dict[str, Any] = {"code": code}
         self._call.emit(job)
-        return job["result"]
+        result: tuple[str, bool] = job["result"]
+        return result
 
 
-_server = None
+_server: tuple[_GuiRunner, str, str] | None = None
 
 
-def _mcp_servers():
+def _mcp_servers() -> list[Json]:
     """Start the MCP server once per FreeCAD session; return the ACP mcpServers list."""
     global _server
     if _server is None:
@@ -80,18 +83,18 @@ def _mcp_servers():
     ]
 
 
-def _session_cwd():
+def _session_cwd() -> str:
     doc = App.ActiveDocument
     if doc and doc.FileName:
-        return os.path.dirname(doc.FileName)
+        return str(os.path.dirname(doc.FileName))
     return os.path.expanduser("~")
 
 
 class ChatDock(QtWidgets.QDockWidget):
-    def __init__(self, parent):
+    def __init__(self, parent: QtWidgets.QWidget) -> None:
         super().__init__("AI Chat", parent)
         self.setObjectName("ACPChatDock")
-        self.proc = None
+        self.proc: QtCore.QProcess | None = None
         self.client: AcpClient | None = None
         self.first_turn = True
 
@@ -161,15 +164,15 @@ class ChatDock(QtWidgets.QDockWidget):
 
     # -- process lifecycle -------------------------------------------------
 
-    def _start_once(self, visible):
+    def _start_once(self, visible: bool) -> None:
         if visible and self.proc is None:
             self.restart()
 
-    def _save_toggles(self):
+    def _save_toggles(self) -> None:
         PREFS.SetBool("IncludeSelection", self.composer.sel_btn.isChecked())
         PREFS.SetBool("IncludeView", self.composer.view_btn.isChecked())
 
-    def restart(self):
+    def restart(self) -> None:
         if self.proc:
             self.proc.finished.disconnect()
             self.proc.kill()
@@ -182,26 +185,26 @@ class ChatDock(QtWidgets.QDockWidget):
         name = next((n for n, c in PROVIDERS if c == cmd), "Custom")
         self.provider_btn.setText(name)
         self.provider_btn.setToolTip(f"Provider: {name}\n{cmd}")
-        self.proc = QtCore.QProcess(self)
+        proc = self.proc = QtCore.QProcess(self)
         if sys.platform == "win32":
-            self.proc.setProgram("cmd")
-            self.proc.setArguments(["/c", cmd])
+            proc.setProgram("cmd")
+            proc.setArguments(["/c", cmd])
         else:
             # Login shell so GUI-launched FreeCAD finds npx/node on the user's PATH.
-            self.proc.setProgram(os.environ.get("SHELL", "/bin/sh"))
-            self.proc.setArguments(["-lc", cmd])
+            proc.setProgram(os.environ.get("SHELL", "/bin/sh"))
+            proc.setArguments(["-lc", cmd])
         client = self.client = AcpClient(
-            lambda data: self.proc.write(data),
+            lambda data: proc.write(data),
             self._on_update,
             self.transcript.permission,
             self._on_error,
         )
-        self.proc.readyReadStandardOutput.connect(lambda: client.feed(bytes(self.proc.readAllStandardOutput())))
-        self.proc.readyReadStandardError.connect(
-            lambda: App.Console.PrintLog(bytes(self.proc.readAllStandardError()).decode("utf-8", "replace"))
+        proc.readyReadStandardOutput.connect(lambda: client.feed(bytes(proc.readAllStandardOutput())))
+        proc.readyReadStandardError.connect(
+            lambda: App.Console.PrintLog(bytes(proc.readAllStandardError()).decode("utf-8", "replace"))
         )
-        self.proc.finished.connect(self._on_exit)
-        self.proc.start()
+        proc.finished.connect(self._on_exit)
+        proc.start()
         self.client.start(
             _session_cwd(),
             _mcp_servers(),
@@ -209,11 +212,11 @@ class ChatDock(QtWidgets.QDockWidget):
             self._sign_in,
         )
 
-    def _sign_in(self, methods, authenticate):
+    def _sign_in(self, methods: list[Json], authenticate: Callable[[str], None]) -> None:
         self.transcript.sign_in(self.provider_btn.text(), methods, authenticate)
         self.composer.edit.setPlaceholderText("Sign in above to start")
 
-    def _on_ready(self, _session_id):
+    def _on_ready(self, _session_id: str) -> None:
         assert self.client is not None
         self._set_state(ready=True, busy=False)
         # Re-apply the user's last choices (model, effort, mode, ...) to the new session.
@@ -224,7 +227,7 @@ class ChatDock(QtWidgets.QDockWidget):
                 self.client.set_config(opt["id"], saved)
         self.composer.set_config_options(self.client.config_options)
 
-    def _fill_provider_menu(self):
+    def _fill_provider_menu(self) -> None:
         menu = self.provider_btn.menu()
         menu.clear()
         current = PREFS.GetString("AgentCommand", DEFAULT_AGENT)
@@ -243,7 +246,7 @@ class ChatDock(QtWidgets.QDockWidget):
         custom.triggered.connect(self._custom_provider)
         group.addAction(custom)
 
-    def _custom_provider(self):
+    def _custom_provider(self) -> None:
         current = PREFS.GetString("AgentCommand", DEFAULT_AGENT)
         cmd, ok = QtWidgets.QInputDialog.getText(
             self, "Custom ACP agent", "Shell command that starts an ACP agent on stdio:", text=current
@@ -251,18 +254,18 @@ class ChatDock(QtWidgets.QDockWidget):
         if ok and cmd.strip():
             self._switch_provider(cmd.strip())
 
-    def _switch_provider(self, cmd):
+    def _switch_provider(self, cmd: str) -> None:
         """Switching provider starts a new chat with the new agent."""
         if cmd != PREFS.GetString("AgentCommand", DEFAULT_AGENT):
             PREFS.SetString("AgentCommand", cmd)
             self.restart()
 
-    def _set_config(self, config_id, value):
+    def _set_config(self, config_id: str, value: str) -> None:
         assert self.client is not None
         PREFS.SetString(f"Config_{config_id}", value)
         self.client.set_config(config_id, value)
 
-    def _on_exit(self, code, _status):
+    def _on_exit(self, code: int, _status: Any) -> None:
         self.transcript.notice(
             f"The agent stopped (exit code {code}). Its log is in the Report view. Start a new chat to try again.",
             error=True,
@@ -271,7 +274,7 @@ class ChatDock(QtWidgets.QDockWidget):
 
     # -- chat ----------------------------------------------------------------
 
-    def send(self, text):
+    def send(self, text: str) -> None:
         assert self.client is not None
         attachments = self._capture()
         self.transcript.user(text, attachments)
@@ -281,7 +284,7 @@ class ChatDock(QtWidgets.QDockWidget):
         blocks = [{"type": "text", "text": text}] + [block for _label, block in attachments]
         self.client.prompt(blocks, self._on_done)
 
-    def _capture(self):
+    def _capture(self) -> list[tuple[str, Json]]:
         """Selection and view as they are now, for the toggles that are on."""
         assert self.client is not None
         out = []
@@ -300,14 +303,14 @@ class ChatDock(QtWidgets.QDockWidget):
                     out.append(("3D view", {"type": "image", "mimeType": "image/png", "data": data}))
         return out
 
-    def _on_done(self, stop_reason):
+    def _on_done(self, stop_reason: str | None) -> None:
         if stop_reason == "cancelled":
             self.transcript.notice("Stopped.")
         elif stop_reason not in ("end_turn", None):
             self.transcript.notice(f"The agent ended its turn early ({stop_reason}).")
         self._set_state(ready=True, busy=False)
 
-    def _on_update(self, update):
+    def _on_update(self, update: Json) -> None:
         kind = update.get("sessionUpdate")
         if kind == "agent_message_chunk" and update["content"].get("type") == "text":
             self.transcript.assistant_chunk(update["content"]["text"])
@@ -316,42 +319,42 @@ class ChatDock(QtWidgets.QDockWidget):
         elif kind == "config_option_update" and self.client:
             self.composer.set_config_options(self.client.config_options)
 
-    def _on_error(self, message):
+    def _on_error(self, message: str) -> None:
         self.transcript.notice(message, error=True)
         App.Console.PrintError(f"ACP Chat: {message}\n")
         self._set_state(ready=bool(self.client and self.client.session_id), busy=False)
 
-    def _set_state(self, ready, busy):
+    def _set_state(self, ready: bool, busy: bool) -> None:
         self.composer.set_state(ready, busy)
         self.working.setVisible(busy)
         self._dots.start(450) if busy else self._dots.stop()
 
-    def closeEvent(self, event):
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         if self.proc:
             self.proc.kill()
         super().closeEvent(event)
 
 
 class _SelectionObserver:
-    def __init__(self, changed):
+    def __init__(self, changed: Callable[[], None]) -> None:
         self.changed = changed
 
-    def addSelection(self, *_args):
+    def addSelection(self, *_args: object) -> None:
         self.changed()
 
-    def removeSelection(self, *_args):
+    def removeSelection(self, *_args: object) -> None:
         self.changed()
 
-    def setSelection(self, *_args):
+    def setSelection(self, *_args: object) -> None:
         self.changed()
 
-    def clearSelection(self, *_args):
+    def clearSelection(self, *_args: object) -> None:
         self.changed()
 
 
-def _dock():
+def _dock() -> ChatDock:
     mw = Gui.getMainWindow()
-    dock = mw.findChild(QtWidgets.QDockWidget, "ACPChatDock")
+    dock: ChatDock | None = mw.findChild(QtWidgets.QDockWidget, "ACPChatDock")
     if dock is None:
         dock = ChatDock(mw)
         mw.addDockWidget(QtCore.Qt.RightDockWidgetArea, dock)
@@ -359,20 +362,20 @@ def _dock():
 
 
 class ToggleChatCommand:
-    def GetResources(self):
+    def GetResources(self) -> dict[str, str]:
         return {
             "Pixmap": os.path.join(os.path.dirname(__file__), "Resources", "icons", "acp_chat.svg"),
             "MenuText": "AI Chat",
             "ToolTip": "Show or hide the AI chat panel",
         }
 
-    def Activated(self):
+    def Activated(self) -> None:
         dock = _dock()
         dock.setVisible(not dock.isVisible())  # agent starts on first show
 
 
 class _ToolbarManipulator:
-    def modifyToolBars(self):
+    def modifyToolBars(self) -> list[dict[str, str]]:
         # First entry creates the toolbar under the root, second adds the command.
         return [{"append": "AI Chat", "toolBar": ""}, {"append": "ACPChat_Toggle", "toolBar": "AI Chat"}]
 

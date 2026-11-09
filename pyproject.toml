@@ -29,13 +29,19 @@ known-third-party = ["FreeCAD", "FreeCADGui"]
 python_version = "3.11"
 files = ["freecad", "tests"]
 explicit_package_bases = true
-check_untyped_defs = true
+strict = true
 warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
 # Provided by FreeCAD at runtime; no stubs on PyPI.
 module = ["FreeCAD", "FreeCADGui", "PySide", "PySide.*", "PySide6", "PySide6.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Qt widgets subclass PySide classes, which mypy sees as Any (FreeCAD's PySide has no stubs).
+module = ["freecad.acp_chat.ui", "freecad.acp_chat.init_gui"]
+disallow_subclassing_any = false
+disallow_untyped_decorators = false  # QtCore.Slot
 
 [dependency-groups]
 dev = [
