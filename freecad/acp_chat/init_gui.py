@@ -13,9 +13,9 @@ import traceback
 
 import FreeCAD as App
 import FreeCADGui as Gui
-from PySide import QtCore, QtGui, QtWidgets
+from PySide import QtCore, QtWidgets
 
-from freecad.acp_chat import context, mcp_server
+from freecad.acp_chat import context, mcp_server, ui
 from freecad.acp_chat.acp import AcpClient
 
 PREFS = App.ParamGet("User parameter:BaseApp/Preferences/Mod/ACPChat")
@@ -80,48 +80,54 @@ class ChatDock(QtWidgets.QDockWidget):
         self.proc = None
         self.client = None
         self.first_turn = True
-        self.attachments = []  # (label, ACP content block) sent with the next message
 
-        self.log = QtWidgets.QTextBrowser()
-        self.input = QtWidgets.QPlainTextEdit()
-        self.input.setPlaceholderText("Ask the agent… (Ctrl+Enter to send)")
-        self.input.setMaximumHeight(90)
-        self.send_btn = QtWidgets.QPushButton("Send")
-        self.stop_btn = QtWidgets.QPushButton("Stop")
-        new_btn = QtWidgets.QPushButton("New session")
-        self.send_btn.clicked.connect(self.send)
-        self.stop_btn.clicked.connect(lambda: self.client and self.client.cancel())
+        root = QtWidgets.QWidget()
+        root.setObjectName("chatRoot")
+        self.t = ui.theme(parent)
+
+        header = QtWidgets.QWidget()
+        header.setObjectName("header")
+        head = QtWidgets.QHBoxLayout(header)
+        head.setContentsMargins(12, 6, 6, 6)
+        title = QtWidgets.QLabel("AI Chat")
+        title.setObjectName("title")
+        self.agent_label = ui._label(muted=True)
+        new_btn = QtWidgets.QToolButton()
+        new_btn.setObjectName("iconBtn")
+        new_btn.setIcon(ui.icon("plus", self.t["muted"]))
+        new_btn.setToolTip("New chat (restarts the agent)")
+        new_btn.setAccessibleName("New chat")
         new_btn.clicked.connect(self.restart)
-        QtGui.QShortcut(QtGui.QKeySequence("Ctrl+Return"), self.input, self.send)
-        sel_btn = QtWidgets.QPushButton("Attach selection")
-        sel_btn.setToolTip("Send the selected faces, edges, vertices and objects with the next message")
-        view_btn = QtWidgets.QPushButton("Attach view")
-        view_btn.setToolTip("Send a picture of the current 3D view with the next message")
-        self.clear_btn = QtWidgets.QPushButton("Clear")
-        self.attached_label = QtWidgets.QLabel()
-        self.attached_label.setWordWrap(True)
-        sel_btn.clicked.connect(self.attach_selection)
-        view_btn.clicked.connect(self.attach_view)
-        self.clear_btn.clicked.connect(lambda: self._set_attachments([]))
-        attach_row = QtWidgets.QHBoxLayout()
-        for w in (sel_btn, view_btn, self.clear_btn):
-            attach_row.addWidget(w)
-        attach_row.addStretch()
+        head.addWidget(title)
+        head.addWidget(self.agent_label, 1)
+        head.addWidget(new_btn)
 
-        buttons = QtWidgets.QHBoxLayout()
-        for b in (self.send_btn, self.stop_btn, new_btn):
-            buttons.addWidget(b)
-        layout = QtWidgets.QVBoxLayout()
-        layout.addWidget(self.log)
-        layout.addLayout(attach_row)
-        layout.addWidget(self.attached_label)
-        layout.addWidget(self.input)
-        layout.addLayout(buttons)
-        body = QtWidgets.QWidget()
-        body.setLayout(layout)
-        self.setWidget(body)
-        self._set_busy(True)
-        self._set_attachments([])
+        self.transcript = ui.Transcript()
+        self.working = ui._label("Working", muted=True)
+        self.working.hide()
+        self._dots = QtCore.QTimer(self)
+        self._dots.timeout.connect(
+            lambda: self.working.setText("Working" + "." * ((self.working.text().count(".") + 1) % 4))
+        )
+        self.composer = ui.Composer(self.t)
+        self.composer.send.connect(self.send)
+        self.composer.stop.connect(lambda: self.client and self.client.cancel())
+        self.composer.attach_selection.connect(self.attach_selection)
+        self.composer.attach_view.connect(self.attach_view)
+
+        bottom = QtWidgets.QVBoxLayout()
+        bottom.setContentsMargins(10, 4, 10, 10)
+        bottom.setSpacing(6)
+        bottom.addWidget(self.working)
+        bottom.addWidget(self.composer)
+        layout = QtWidgets.QVBoxLayout(root)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(header)
+        layout.addWidget(self.transcript, 1)
+        layout.addLayout(bottom)
+        root.setStyleSheet(ui.stylesheet(self.t))
+        self.setWidget(root)
         self.visibilityChanged.connect(self._start_once)
 
     # -- process lifecycle -------------------------------------------------
@@ -132,13 +138,16 @@ class ChatDock(QtWidgets.QDockWidget):
 
     def restart(self):
         if self.proc:
+            self.proc.finished.disconnect()
             self.proc.kill()
             self.proc.waitForFinished(2000)
-        self.log.clear()
+        self.transcript.clear()
+        self.composer.take_attachments()
         self.first_turn = True
-        self._set_attachments([])
-        self._set_busy(True)
+        self._set_state(ready=False, busy=False)
         cmd = PREFS.GetString("AgentCommand", DEFAULT_AGENT)
+        self.agent_label.setText("starting…")
+        self.agent_label.setToolTip(cmd)
         self.proc = QtCore.QProcess(self)
         if sys.platform == "win32":
             self.proc.setProgram("cmd")
@@ -157,97 +166,74 @@ class ChatDock(QtWidgets.QDockWidget):
         self.client = AcpClient(
             lambda data: self.proc.write(data),
             self._on_update,
-            self._on_permission,
+            self.transcript.permission,
             self._on_error,
         )
-        self._append(f"Starting agent: {cmd}\n")
         self.proc.start()
-        self.client.start(_session_cwd(), _mcp_servers(), lambda _sid: (self._append("Ready.\n"), self._set_busy(False)))
+        self.client.start(_session_cwd(), _mcp_servers(), self._on_ready)
+
+    def _on_ready(self, _session_id):
+        info = self.client.agent_info
+        self.agent_label.setText(info.get("title") or info.get("name") or "")
+        self._set_state(ready=True, busy=False)
 
     def _on_exit(self, code, _status):
-        self._append(f"\n⚠ Agent exited (code {code}). Check Report view for its log; click New session to retry.\n")
-        self._set_busy(True)
+        self.agent_label.setText("stopped")
+        self.transcript.notice(
+            f"The agent stopped (exit code {code}). Its log is in the Report view. Start a new chat to try again.",
+            error=True,
+        )
+        self._set_state(ready=False, busy=False)
 
     # -- chat ----------------------------------------------------------------
 
-    def send(self):
-        text = self.input.toPlainText().strip()
-        if not text or not self.send_btn.isEnabled():
-            return
-        self.input.clear()
-        self._append(f"\n\n▶ {text}\n\n")
-        self._set_busy(True)
-        for label, _block in self.attachments:
-            self._append(f"📎 {label}\n")
+    def send(self, text):
+        attachments = self.composer.take_attachments()
+        self.transcript.user(text, attachments)
+        self._set_state(ready=True, busy=True)
         if self.first_turn:
             text, self.first_turn = FIRST_TURN_HINT + text, False
-        blocks = [{"type": "text", "text": text}] + [block for _label, block in self.attachments]
-        self._set_attachments([])
+        blocks = [{"type": "text", "text": text}] + [block for _label, block in attachments]
         self.client.prompt(blocks, self._on_done)
 
     def attach_selection(self):
         text = context.selection_text()
         if text is None:
-            return self._append("\n⚠ Nothing selected.\n")
+            return self.transcript.notice("Nothing is selected. Select faces, edges or objects first.")
         count = text.count("\n- ")
-        self._set_attachments(self.attachments + [(f"selection ({count})", {"type": "text", "text": text})])
+        self.composer.add_attachment(f"{count} selected", {"type": "text", "text": text})
 
     def attach_view(self):
         if self.client and self.client.session_id and not self.client.supports_images():
-            return self._append("\n⚠ This agent does not accept images.\n")
+            return self.transcript.notice("This agent does not accept images.")
         data = context.view_image()
         if data is None:
-            return self._append("\n⚠ No 3D view open.\n")
-        self._set_attachments(self.attachments + [("view", {"type": "image", "mimeType": "image/png", "data": data})])
-
-    def _set_attachments(self, attachments):
-        self.attachments = attachments
-        labels = ", ".join(label for label, _block in attachments)
-        self.attached_label.setText(f"📎 {labels}" if labels else "")
-        self.attached_label.setVisible(bool(labels))
-        self.clear_btn.setVisible(bool(labels))
+            return self.transcript.notice("No 3D view is open.")
+        self.composer.add_attachment("3D view", {"type": "image", "mimeType": "image/png", "data": data})
 
     def _on_done(self, stop_reason):
-        if stop_reason not in ("end_turn", None):
-            self._append(f"\n[{stop_reason}]")
-        self._set_busy(False)
+        if stop_reason == "cancelled":
+            self.transcript.notice("Stopped.")
+        elif stop_reason not in ("end_turn", None):
+            self.transcript.notice(f"The agent ended its turn early ({stop_reason}).")
+        self._set_state(ready=True, busy=False)
 
     def _on_update(self, update):
         kind = update.get("sessionUpdate")
         if kind == "agent_message_chunk" and update["content"].get("type") == "text":
-            self._append(update["content"]["text"])
-        elif kind == "tool_call":
-            self._append(f"\n🔧 {update.get('title', 'tool')}\n")
-        elif kind == "tool_call_update" and update.get("status") == "failed":
-            self._append(f"\n✗ tool failed: {update.get('title') or update.get('toolCallId')}\n")
-
-    def _on_permission(self, params, reply):
-        box = QtWidgets.QMessageBox(self)
-        box.setWindowTitle("Agent requests permission")
-        box.setText((params.get("toolCall") or {}).get("title") or "Allow this action?")
-        buttons = {
-            box.addButton(opt["name"], QtWidgets.QMessageBox.ActionRole): opt["optionId"]
-            for opt in params.get("options", [])
-        }
-        box.addButton(QtWidgets.QMessageBox.Cancel)
-        box.exec()
-        reply(buttons.get(box.clickedButton()))
+            self.transcript.assistant_chunk(update["content"]["text"])
+        elif kind in ("tool_call", "tool_call_update"):
+            self.transcript.tool(update)
 
     def _on_error(self, message):
-        self._append(f"\n⚠ {message}\n")
+        self.transcript.notice(message, error=True)
         App.Console.PrintError(f"ACP Chat: {message}\n")
-        self._set_busy(False)
+        self._set_state(ready=bool(self.client and self.client.session_id), busy=False)
 
-    # -- ui helpers -----------------------------------------------------------
-
-    def _append(self, text):
-        self.log.moveCursor(QtGui.QTextCursor.End)
-        self.log.insertPlainText(text)
-        self.log.ensureCursorVisible()
-
-    def _set_busy(self, busy):
-        self.send_btn.setEnabled(not busy)
-        self.stop_btn.setEnabled(busy)
+    def _set_state(self, ready, busy):
+        self.composer.set_state(ready, busy)
+        self.working.setVisible(busy)
+        self._dots.start(450) if busy else self._dots.stop()
 
     def closeEvent(self, event):
         if self.proc:
@@ -266,7 +252,11 @@ def _dock():
 
 class ToggleChatCommand:
     def GetResources(self):
-        return {"MenuText": "AI Chat", "ToolTip": "Show or hide the AI chat panel"}
+        return {
+            "Pixmap": os.path.join(os.path.dirname(__file__), "Resources", "icons", "acp_chat.svg"),
+            "MenuText": "AI Chat",
+            "ToolTip": "Show or hide the AI chat panel",
+        }
 
     def Activated(self):
         dock = _dock()

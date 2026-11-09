@@ -21,6 +21,7 @@ class AcpClient:
         self._pending = {}
         self.session_id = None
         self.agent_capabilities = {}
+        self.agent_info = {}
 
     # -- outgoing ---------------------------------------------------------
 
@@ -45,6 +46,7 @@ class AcpClient:
 
         def initialized(result):
             self.agent_capabilities = result.get("agentCapabilities") or {}
+            self.agent_info = result.get("agentInfo") or {}
             self.request(
                 "session/new",
                 {"cwd": cwd, "mcpServers": mcp_servers},
