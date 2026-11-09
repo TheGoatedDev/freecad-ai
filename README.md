@@ -12,10 +12,12 @@ The default agent needs Node (`npx`) and a Claude Code login.
 
 ## Context
 
-- **Attach selection** sends the selected faces, edges, vertices and objects as text: type, area or length, centroid, normal or radius, and pick point.
-- **Attach view** sends a PNG of the current 3D view, if the agent accepts images.
+Two toggles under the message box decide what goes with each message. Both are captured when you press send.
 
-Attachments go with your next message. **Clear** drops them.
+- **Include selection** (on by default) sends the selected faces, edges, vertices and objects as text: type, area or length, centroid, normal or radius, and pick point. While it is on, chips show the live selection. Click a chip's × to deselect that item.
+- **Include view** sends a PNG of the 3D view, if the agent accepts images.
+
+The toggle states are saved between sessions.
 
 ## Settings
 

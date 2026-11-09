@@ -39,6 +39,13 @@ def icon(name, color, size=16):
     return QtGui.QIcon(pm)
 
 
+def toggle_icon(name, off_color, on_color):
+    out = QtGui.QIcon()
+    for color, state in ((off_color, QtGui.QIcon.Off), (on_color, QtGui.QIcon.On)):
+        out.addPixmap(icon(name, color).pixmap(16, 16), QtGui.QIcon.Normal, state)
+    return out
+
+
 def _mix(a, b, t):
     return QtGui.QColor.fromRgbF(*(x * t + y * (1 - t) for x, y in zip(a.getRgbF()[:3], b.getRgbF()[:3]))).name()
 
@@ -64,6 +71,7 @@ def theme(parent):
         "panel": _mix(text, window, 0.06),
         "border": _mix(text, window, 0.18),
         "accent": pal.color(QtGui.QPalette.Highlight).name(),
+        "accent_soft": _mix(pal.color(QtGui.QPalette.Highlight), window, 0.18),
         "accent_text": pal.color(QtGui.QPalette.HighlightedText).name(),
         "error": "#ff7a7a" if dark else "#c62828",
         "mono": QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont).family(),
@@ -93,6 +101,7 @@ QScrollArea {{ border: none; background: transparent; }}
 #chatRoot QPlainTextEdit {{ selection-background-color: {accent}; selection-color: {accent_text}; }}
 #chatRoot QToolButton#iconBtn {{ border: none; border-radius: 6px; padding: 4px; }}
 #chatRoot QToolButton#iconBtn:hover {{ background: {panel}; }}
+#chatRoot QToolButton#iconBtn:checked {{ background: {accent_soft}; }}
 QPushButton#sendBtn {{ background: {accent}; border: none; border-radius: 14px; padding: 0; }}
 QPushButton#sendBtn:disabled {{ background: {border}; }}
 QPushButton#primary {{ background: {accent}; color: {accent_text}; border: none; border-radius: 6px; padding: 5px 12px; }}
@@ -256,8 +265,8 @@ class Transcript(QtWidgets.QScrollArea):
         head.setStyleSheet("font-weight: 600;")
         lay.addWidget(head)
         lay.addWidget(_label(
-            "The agent can read and change the open document. Select faces or edges, "
-            "then attach them so it knows what you mean.", muted=True))
+            "The agent can read and change the open document. Whatever you select is "
+            "sent with your message, so it knows what you mean.", muted=True))
         self.lay.insertWidget(0, self.empty)
 
     def user(self, text, attachments):
@@ -321,29 +330,33 @@ class Transcript(QtWidgets.QScrollArea):
 
 
 class Composer(QtWidgets.QFrame):
+    """Input box. The selection and view toggles are read at send time; while on,
+    their chips preview what will be sent."""
+
+    MAX_CHIPS = 3
+
     send = QtCore.Signal(str)
     stop = QtCore.Signal()
-    attach_selection = QtCore.Signal()
-    attach_view = QtCore.Signal()
+    toggles_changed = QtCore.Signal()
+    unselect = QtCore.Signal(object)  # one item from set_selection()
 
     def __init__(self, t):
         super().__init__()
         self.setObjectName("composer")
         self.t = t
-        self.attachments = []
+        self.selection = []  # [(label, key)] for the live preview
         self.busy = False
-        self.chips = QtWidgets.QHBoxLayout()
+        self.chips = QtWidgets.QGridLayout()  # two per row so chips never widen a narrow dock
         self.chips.setSpacing(6)
+        self.chips.setColumnStretch(2, 1)
         self.edit = QtWidgets.QPlainTextEdit()
         self.edit.setPlaceholderText("Ask anything about the model")
         self.edit.setAccessibleName("Message")
         self.edit.setTabChangesFocus(True)
         self.edit.installEventFilter(self)
         self.edit.textChanged.connect(self._grow)
-        self.sel_btn = self._icon_btn("pointer", "Attach selection: send the selected faces, edges and objects")
-        self.view_btn = self._icon_btn("camera", "Attach view: send a picture of the current 3D view")
-        self.sel_btn.clicked.connect(self.attach_selection)
-        self.view_btn.clicked.connect(self.attach_view)
+        self.sel_btn = self._toggle("pointer", "Include selection: send the selected faces, edges and objects")
+        self.view_btn = self._toggle("camera", "Include view: send a picture of the 3D view")
         self.send_btn = QtWidgets.QPushButton()
         self.send_btn.setObjectName("sendBtn")
         self.send_btn.setFixedSize(28, 28)
@@ -369,6 +382,13 @@ class Composer(QtWidgets.QFrame):
         b.setIcon(icon(name, self.t["muted"]))
         b.setToolTip(tip)
         b.setAccessibleName(tip.split(":")[0])
+        return b
+
+    def _toggle(self, name, tip):
+        b = self._icon_btn(name, tip)
+        b.setCheckable(True)
+        b.setIcon(toggle_icon(name, self.t["muted"], self.t["accent"]))
+        b.toggled.connect(lambda _on: (self._render_chips(), self.toggles_changed.emit()))
         return b
 
     def eventFilter(self, obj, event):
@@ -406,34 +426,45 @@ class Composer(QtWidgets.QFrame):
         self.send_btn.setAccessibleName("Stop" if busy else "Send")
         self.edit.setPlaceholderText("Ask anything about the model" if ready or busy else "Starting agent…")
 
-    def add_attachment(self, label, block):
-        self.attachments.append((label, block))
+    def set_selection(self, items):
+        self.selection = items
         self._render_chips()
 
-    def take_attachments(self):
-        out, self.attachments = self.attachments, []
-        self._render_chips()
-        return out
+    def _chip(self, text, tip, on_remove, pic=None):
+        chip = QtWidgets.QFrame()
+        chip.setObjectName("chip")
+        chip.setToolTip(tip)
+        row = QtWidgets.QHBoxLayout(chip)
+        row.setContentsMargins(6, 2, 2, 2)
+        row.setSpacing(4)
+        if pic:
+            p = QtWidgets.QLabel()
+            p.setPixmap(icon(pic, self.t["muted"], 12).pixmap(12, 12))
+            row.addWidget(p)
+        row.addWidget(QtWidgets.QLabel(text))
+        if on_remove:
+            rm = self._icon_btn("x", f"Remove {text}")
+            rm.setIconSize(QtCore.QSize(12, 12))
+            rm.clicked.connect(on_remove)
+            row.addWidget(rm)
+        n = self.chips.count()
+        self.chips.addWidget(chip, n // 2, n % 2, QtCore.Qt.AlignLeft)
 
     def _render_chips(self):
         while self.chips.count():
             item = self.chips.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
-        for i, (label, block) in enumerate(self.attachments):
-            chip = QtWidgets.QFrame()
-            chip.setObjectName("chip")
-            row = QtWidgets.QHBoxLayout(chip)
-            row.setContentsMargins(4, 2, 2, 2)
-            row.setSpacing(4)
-            if block["type"] == "image":
-                pic = QtWidgets.QLabel()
-                pic.setPixmap(_thumb(block, 20))
-                row.addWidget(pic)
-            row.addWidget(QtWidgets.QLabel(label))
-            rm = self._icon_btn("x", f"Remove {label}")
-            rm.setIconSize(QtCore.QSize(12, 12))
-            rm.clicked.connect(lambda _=False, i=i: (self.attachments.pop(i), self._render_chips()))
-            row.addWidget(rm)
-            self.chips.addWidget(chip)
-        self.chips.addStretch()
+        if self.view_btn.isChecked():
+            self._chip("3D view", "A picture of the 3D view is taken when you send",
+                       lambda: self.view_btn.setChecked(False), pic="camera")
+        if self.sel_btn.isChecked():
+            shown = self.selection[: self.MAX_CHIPS]
+            for label, key in shown:
+                self._chip(label, "Click × to deselect it in FreeCAD",
+                           lambda _=False, k=key: self.unselect.emit(k), pic="pointer")
+            rest = self.selection[self.MAX_CHIPS:]
+            if rest:
+                self._chip(f"+{len(rest)} more", "\n".join(label for label, _k in rest), None)
+            if not self.selection:
+                self._chip("Nothing selected", "Select faces, edges or objects in the 3D view", None, pic="pointer")

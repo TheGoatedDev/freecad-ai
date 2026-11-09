@@ -38,6 +38,17 @@ def _geometry(sub):
     return kind or type(sub).__name__
 
 
+def selection_items():
+    """[(chip label, (doc, object, sub-element))] for the current selection."""
+    items = []
+    for sel in Gui.Selection.getSelectionEx("", 0):
+        obj = sel.Object
+        for name in sel.SubElementNames or [""]:
+            leaf = name.split(".")[-1]
+            items.append((f"{leaf} · {obj.Label}" if leaf else obj.Label, (sel.DocumentName, obj.Name, name)))
+    return items
+
+
 def selection_text():
     """Describe the current selection, or return None if nothing is selected."""
     lines = []

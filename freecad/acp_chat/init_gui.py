@@ -112,8 +112,17 @@ class ChatDock(QtWidgets.QDockWidget):
         self.composer = ui.Composer(self.t)
         self.composer.send.connect(self.send)
         self.composer.stop.connect(lambda: self.client and self.client.cancel())
-        self.composer.attach_selection.connect(self.attach_selection)
-        self.composer.attach_view.connect(self.attach_view)
+        self.composer.sel_btn.setChecked(PREFS.GetBool("IncludeSelection", True))
+        self.composer.view_btn.setChecked(PREFS.GetBool("IncludeView", False))
+        self.composer.toggles_changed.connect(self._save_toggles)
+        self.composer.unselect.connect(lambda key: Gui.Selection.removeSelection(*key))
+        # Coalesce bursts of selection events (box select) into one refresh.
+        self._sel_timer = QtCore.QTimer(self)
+        self._sel_timer.setSingleShot(True)
+        self._sel_timer.timeout.connect(lambda: self.composer.set_selection(context.selection_items()))
+        self._sel_observer = _SelectionObserver(self._sel_timer.start)
+        Gui.Selection.addObserver(self._sel_observer)
+        self._sel_timer.start()
 
         bottom = QtWidgets.QVBoxLayout()
         bottom.setContentsMargins(10, 4, 10, 10)
@@ -136,13 +145,16 @@ class ChatDock(QtWidgets.QDockWidget):
         if visible and self.proc is None:
             self.restart()
 
+    def _save_toggles(self):
+        PREFS.SetBool("IncludeSelection", self.composer.sel_btn.isChecked())
+        PREFS.SetBool("IncludeView", self.composer.view_btn.isChecked())
+
     def restart(self):
         if self.proc:
             self.proc.finished.disconnect()
             self.proc.kill()
             self.proc.waitForFinished(2000)
         self.transcript.clear()
-        self.composer.take_attachments()
         self.first_turn = True
         self._set_state(ready=False, busy=False)
         cmd = PREFS.GetString("AgentCommand", DEFAULT_AGENT)
@@ -188,7 +200,7 @@ class ChatDock(QtWidgets.QDockWidget):
     # -- chat ----------------------------------------------------------------
 
     def send(self, text):
-        attachments = self.composer.take_attachments()
+        attachments = self._capture()
         self.transcript.user(text, attachments)
         self._set_state(ready=True, busy=True)
         if self.first_turn:
@@ -196,20 +208,23 @@ class ChatDock(QtWidgets.QDockWidget):
         blocks = [{"type": "text", "text": text}] + [block for _label, block in attachments]
         self.client.prompt(blocks, self._on_done)
 
-    def attach_selection(self):
-        text = context.selection_text()
-        if text is None:
-            return self.transcript.notice("Nothing is selected. Select faces, edges or objects first.")
-        count = text.count("\n- ")
-        self.composer.add_attachment(f"{count} selected", {"type": "text", "text": text})
-
-    def attach_view(self):
-        if self.client and self.client.session_id and not self.client.supports_images():
-            return self.transcript.notice("This agent does not accept images.")
-        data = context.view_image()
-        if data is None:
-            return self.transcript.notice("No 3D view is open.")
-        self.composer.add_attachment("3D view", {"type": "image", "mimeType": "image/png", "data": data})
+    def _capture(self):
+        """Selection and view as they are now, for the toggles that are on."""
+        out = []
+        if self.composer.sel_btn.isChecked():
+            text = context.selection_text()
+            if text:
+                out.append((f"{text.count(chr(10) + '- ')} selected", {"type": "text", "text": text}))
+        if self.composer.view_btn.isChecked():
+            if not self.client.supports_images():
+                self.transcript.notice("This agent does not accept images, so the view was not sent.")
+            else:
+                data = context.view_image()
+                if data is None:
+                    self.transcript.notice("No 3D view is open, so the view was not sent.")
+                else:
+                    out.append(("3D view", {"type": "image", "mimeType": "image/png", "data": data}))
+        return out
 
     def _on_done(self, stop_reason):
         if stop_reason == "cancelled":
@@ -239,6 +254,23 @@ class ChatDock(QtWidgets.QDockWidget):
         if self.proc:
             self.proc.kill()
         super().closeEvent(event)
+
+
+class _SelectionObserver:
+    def __init__(self, changed):
+        self.changed = changed
+
+    def addSelection(self, *_args):
+        self.changed()
+
+    def removeSelection(self, *_args):
+        self.changed()
+
+    def setSelection(self, *_args):
+        self.changed()
+
+    def clearSelection(self, *_args):
+        self.changed()
 
 
 def _dock():
