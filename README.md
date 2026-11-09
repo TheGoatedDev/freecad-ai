@@ -108,11 +108,14 @@ The panel starts the agent with your login shell so `npx` is on the path, and ta
 
 ## Settings
 
-Under **Tools > Edit parameters**, in `BaseApp/Preferences/Mod/ACPChat`:
+Click the sliders button in the panel header, or open **Edit > Preferences > AI Chat**, to set the **working folder**. The agent starts in that folder, so it reads any `CLAUDE.md` or `AGENTS.md` you keep there. Use these files for standing instructions such as units, naming rules or which workbench to use. If the field is empty, the agent starts in the open document's folder, or in your home folder if there is none. A changed folder applies to the next new chat.
+
+The rest of the settings are under **Tools > Edit parameters**, in `BaseApp/Preferences/Mod/ACPChat`:
 
 | Key | Meaning |
 | --- | --- |
 | `AgentCommand` | Shell command for the current provider |
+| `WorkingFolder` | Folder the agent starts in. Empty means the open document's folder |
 | `IncludeSelection`, `IncludeView` | Toggle states |
 | `Config_<id>` | Last chosen value for each agent option, such as `Config_model` |
 

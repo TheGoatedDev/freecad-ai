@@ -2,7 +2,8 @@
 built-in MCP server (mcp_server.py) so it can drive the live session.
 
 Settings (Tools > Edit parameters > BaseApp/Preferences/Mod/ACPChat):
-  AgentCommand  shell command that starts an ACP agent
+  AgentCommand   shell command that starts an ACP agent
+  WorkingFolder  folder the agent starts in (Edit > Preferences > AI Chat)
 """
 
 import contextlib
@@ -30,6 +31,7 @@ PROVIDERS = [
     ("GitHub Copilot", "npx -y @github/copilot --acp"),
 ]
 DEFAULT_AGENT = PROVIDERS[0][1]
+ICON = os.path.join(os.path.dirname(__file__), "Resources", "icons", "acp_chat.svg")
 FIRST_TURN_HINT = (
     "You are an assistant inside FreeCAD. Use the `freecad` MCP tools to inspect "
     "and modify the user's open session.\n\n"
@@ -83,7 +85,15 @@ def _mcp_servers() -> list[Json]:
     ]
 
 
+def _working_folder() -> str:
+    return os.path.expanduser(str(PREFS.GetString("WorkingFolder", "")).strip())
+
+
 def _session_cwd() -> str:
+    """The working folder if set, so the agent reads the CLAUDE.md/AGENTS.md kept there."""
+    folder = _working_folder()
+    if folder and os.path.isdir(folder):
+        return folder
     doc = App.ActiveDocument
     if doc and doc.FileName:
         return str(os.path.dirname(doc.FileName))
@@ -119,9 +129,16 @@ class ChatDock(QtWidgets.QDockWidget):
         new_btn.setToolTip("New chat (restarts the agent)")
         new_btn.setAccessibleName("New chat")
         new_btn.clicked.connect(self.restart)
+        settings_btn = QtWidgets.QToolButton()
+        settings_btn.setObjectName("iconBtn")
+        settings_btn.setIcon(ui.icon("sliders", self.t["muted"]))
+        settings_btn.setToolTip("Settings")
+        settings_btn.setAccessibleName("Settings")
+        settings_btn.clicked.connect(lambda: Gui.showPreferences("AI Chat", 0))
         head.addWidget(title)
         head.addWidget(self.provider_btn)
         head.addStretch()
+        head.addWidget(settings_btn)
         head.addWidget(new_btn)
 
         self.transcript = ui.Transcript()
@@ -204,9 +221,14 @@ class ChatDock(QtWidgets.QDockWidget):
             lambda: App.Console.PrintLog(bytes(proc.readAllStandardError()).decode("utf-8", "replace"))
         )
         proc.finished.connect(self._on_exit)
+        cwd = _session_cwd()
+        folder = _working_folder()
+        if folder and folder != cwd:
+            self.transcript.notice(f"The working folder {folder} does not exist, so the agent started in {cwd}.")
+        proc.setWorkingDirectory(cwd)
         proc.start()
         self.client.start(
-            _session_cwd(),
+            cwd,
             _mcp_servers(),
             self._on_ready,
             self._sign_in,
@@ -364,7 +386,7 @@ def _dock() -> ChatDock:
 class ToggleChatCommand:
     def GetResources(self) -> dict[str, str]:
         return {
-            "Pixmap": os.path.join(os.path.dirname(__file__), "Resources", "icons", "acp_chat.svg"),
+            "Pixmap": ICON,
             "MenuText": "AI Chat",
             "ToolTip": "Show or hide the AI chat panel",
         }
@@ -374,6 +396,45 @@ class ToggleChatCommand:
         dock.setVisible(not dock.isVisible())  # agent starts on first show
 
 
+class PreferencePage:
+    """Edit > Preferences > AI Chat."""
+
+    def __init__(self) -> None:
+        self.form = QtWidgets.QWidget()
+        self.form.setWindowTitle("General")
+        self.folder = QtWidgets.QLineEdit()
+        self.folder.setPlaceholderText("Folder of the open document, or your home folder")
+        browse = QtWidgets.QPushButton("Browse…")
+        browse.clicked.connect(self._browse)
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(self.folder, 1)
+        row.addWidget(browse)
+        note = QtWidgets.QLabel(
+            "The agent starts in this folder, so it picks up the CLAUDE.md or AGENTS.md you keep there. "
+            "Leave it empty to use the open document's folder. Takes effect on the next new chat."
+        )
+        note.setWordWrap(True)
+        box = QtWidgets.QGroupBox("Working folder")
+        inner = QtWidgets.QVBoxLayout(box)
+        inner.addLayout(row)
+        inner.addWidget(note)
+        layout = QtWidgets.QVBoxLayout(self.form)
+        layout.addWidget(box)
+        layout.addStretch()
+
+    def _browse(self) -> None:
+        start = _working_folder() or os.path.expanduser("~")
+        folder = QtWidgets.QFileDialog.getExistingDirectory(self.form, "Working folder", start)
+        if folder:
+            self.folder.setText(folder)
+
+    def loadSettings(self) -> None:
+        self.folder.setText(PREFS.GetString("WorkingFolder", ""))
+
+    def saveSettings(self) -> None:
+        PREFS.SetString("WorkingFolder", self.folder.text().strip())
+
+
 class _ToolbarManipulator:
     def modifyToolBars(self) -> list[dict[str, str]]:
         # First entry creates the toolbar under the root, second adds the command.
@@ -381,4 +442,7 @@ class _ToolbarManipulator:
 
 
 Gui.addCommand("ACPChat_Toggle", ToggleChatCommand())
+with open(ICON, "rb") as _f:  # the Preferences dialog looks up its group icon by this name
+    Gui.addIcon("preferences-ai_chat", _f.read(), "SVG")
+Gui.addPreferencePage(PreferencePage, "AI Chat")
 Gui.addWorkbenchManipulator(_ToolbarManipulator())
