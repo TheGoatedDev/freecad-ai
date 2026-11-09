@@ -149,7 +149,8 @@ class ToolRow(QtWidgets.QWidget):
         self.button = QtWidgets.QToolButton()
         self.button.setObjectName("toolRow")
         self.button.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
-        self.button.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        # Ignored: long code lines must not widen the transcript; text is elided to fit instead.
+        self.button.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
         self.button.setCheckable(True)
         self.detail = QtWidgets.QPlainTextEdit()
         self.detail.setObjectName("toolDetail")
@@ -170,7 +171,8 @@ class ToolRow(QtWidgets.QWidget):
         s = self.state
         code = (s.get("rawInput") or {}).get("code") if isinstance(s.get("rawInput"), dict) else None
         first = (code or "").strip().splitlines()[0][:60] if code and code.strip() else ""
-        self.button.setText(f"{_tool_title(s)}   {first}".rstrip())
+        self._text = f"{_tool_title(s)}   {first}".rstrip()
+        self._elide()
         name, color = {
             "completed": ("check", self.t["muted"]),
             "failed": ("x", self.t["error"]),
@@ -186,6 +188,15 @@ class ToolRow(QtWidgets.QWidget):
         raw = code if code is not None else json.dumps(s.get("rawInput"), indent=2) if s.get("rawInput") else ""
         self.detail.setPlainText("\n\n".join(part for part in (raw.strip(), out.strip() and "→ " + out.strip()) if part))
         self._fit()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._elide()
+
+    def _elide(self):
+        room = self.button.width() - self.button.iconSize().width() - 24
+        self.button.setText(self.button.fontMetrics().elidedText(self._text, QtCore.Qt.ElideRight, max(room, 40)))
+        self.button.setToolTip(self._text)
 
     def _toggle(self, open_):
         self.detail.setVisible(open_)
