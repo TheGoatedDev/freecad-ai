@@ -3,7 +3,7 @@
     <name>ACP Chat</name>
     <description>Chat with any Agent Client Protocol (ACP) agent inside FreeCAD. Uses the MCP Bridge addon to let the agent drive the live session.</description>
     <version>0.1.0</version>
-    <license>MIT</license>
+    <license file="LICENSE">MIT</license>
     <freecadmin>1.1.0</freecadmin>
     <tag>ai</tag>
     <tag>acp</tag>
